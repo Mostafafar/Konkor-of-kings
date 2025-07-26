@@ -16,7 +16,7 @@ from telegram.ext import (
 
 # تنظیمات اولیه
 TOKEN = "7584437136:AAFVtfF9RjCyteONcz8DSg2F2CfhgQT2GcQ"
-DATABASE_URL = "postgresql://username:password@localhost:5432/edu_bot_db"
+DATABASE_URL = "postgresql://@localhost:5432/edu_bot_db"
 ADMIN_PASSWORD = "admin123"  # رمز عبور ادمین
 ADMIN_CODE = "54321"  # کد 5 رقمی ادمین
 
