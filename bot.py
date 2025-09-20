@@ -52,11 +52,11 @@ def init_db():
                 start_question INTEGER,
                 end_question INTEGER,
                 total_questions INTEGER,
-                exam_duration INTEGER,
-                elapsed_time REAL,
+                exam_duration INTEGER DEFAULT 0,
+                elapsed_time REAL DEFAULT 0,
                 answers TEXT,
                 correct_answers TEXT,
-                score REAL,
+                score REAL DEFAULT 0,
                 wrong_questions TEXT,
                 unanswered_questions TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -64,23 +64,23 @@ def init_db():
         ''')
         
         # بررسی و اضافه کردن ستون‌های缺失 اگر وجود ندارند
-        columns_to_check = [
-            'exam_duration',
-            'elapsed_time'
+        columns_to_add = [
+            ('exam_duration', 'INTEGER DEFAULT 0'),
+            ('elapsed_time', 'REAL DEFAULT 0')
         ]
         
-        for column in columns_to_check:
-            cur.execute(f"""
-                SELECT column_name 
-                FROM information_schema.columns 
-                WHERE table_name='exams' AND column_name='{column}'
-            """)
-            if not cur.fetchone():
-                if column == 'exam_duration':
-                    cur.execute("ALTER TABLE exams ADD COLUMN exam_duration INTEGER")
-                elif column == 'elapsed_time':
-                    cur.execute("ALTER TABLE exams ADD COLUMN elapsed_time REAL")
-                logger.info(f"Added missing column: {column}")
+        for column_name, column_type in columns_to_add:
+            try:
+                cur.execute(f"""
+                    SELECT column_name 
+                    FROM information_schema.columns 
+                    WHERE table_name='exams' AND column_name='{column_name}'
+                """)
+                if not cur.fetchone():
+                    cur.execute(f"ALTER TABLE exams ADD COLUMN {column_name} {column_type}")
+                    logger.info(f"Added missing column: {column_name}")
+            except Exception as e:
+                logger.error(f"Error checking/adding column {column_name}: {e}")
         
         conn.commit()
         cur.close()
@@ -143,7 +143,7 @@ async def show_all_questions(update: Update, context: ContextTypes.DEFAULT_TYPE)
         status = f" ✅ (گزینه {current_answer})" if current_answer else ""
         
         # اضافه کردن سوال به متن پیام
-        message_text += f"{question_num}){status}\n"
+     #   message_text += f"{question_num}){status}\n"
         
         # ایجاد دکمه‌های گزینه‌ها برای هر سوال با شماره سوال
         question_buttons = []
@@ -646,6 +646,7 @@ async def show_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
             
         cur = conn.cursor()
+        
         # بررسی وجود ستون elapsed_time
         try:
             cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name='exams' AND column_name='elapsed_time'")
@@ -672,16 +673,32 @@ async def show_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if results:
             result_text = "📋 آخرین نتایج آزمون‌های شما:\n\n"
             for i, result in enumerate(results, 1):
-                if len(result) == 6:  # اگر elapsed_time وجود دارد
-                    date, score, start_q, end_q, duration, elapsed = result
-                    time_text = f"{elapsed:.1f} دقیقه از {duration} دقیقه" if duration > 0 else f"{elapsed:.1f} دقیقه"
-                else:
-                    date, score, start_q, end_q, duration = result
-                    time_text = f"{duration} دقیقه" if duration > 0 else "بدون محدودیت"
+                try:
+                    if len(result) == 6:  # اگر elapsed_time وجود دارد
+                        date, score, start_q, end_q, duration, elapsed = result
+                        # بررسی مقادیر None
+                        duration = duration or 0
+                        elapsed = elapsed or 0
+                        time_text = f"{elapsed:.1f} دقیقه از {duration} دقیقه" if duration and duration > 0 else f"{elapsed:.1f} دقیقه"
+                    else:
+                        date, score, start_q, end_q, duration = result
+                        # بررسی مقادیر None
+                        duration = duration or 0
+                        time_text = f"{duration} دقیقه" if duration and duration > 0 else "بدون محدودیت"
+                    
+                    # بررسی مقادیر None برای سایر فیلدها
+                    score = score or 0
+                    start_q = start_q or 0
+                    end_q = end_q or 0
+                    
+                    result_text += f"{i}. سوالات {start_q}-{end_q} - زمان: {time_text} - نمره: {score:.2f}% - تاریخ: {date.strftime('%Y-%m-%d %H:%M')}\n"
                 
-                result_text += f"{i}. سوالات {start_q}-{end_q} - زمان: {time_text} - نمره: {score:.2f}% - تاریخ: {date.strftime('%Y-%m-%d %H:%M')}\n"
+                except Exception as e:
+                    logger.error(f"Error processing result {i}: {e}")
+                    result_text += f"{i}. خطا در پردازش نتیجه\n"
         else:
             result_text = "📭 هیچ نتیجه‌ای برای نمایش وجود ندارد."
+            
     except Exception as e:
         logger.error(f"Error retrieving results: {e}")
         result_text = "⚠️ خطایی در دریافت نتایج رخ داد."
