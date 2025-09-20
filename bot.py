@@ -525,6 +525,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             job.schedule_removal()
 
 # مدیریت پاسخ‌های اینلاین
+# در تابع handle_answer، بخش مربوط به پاسخ‌گویی به سوالات را تغییر دهید:
 async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -553,8 +554,12 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if 'user_exams' in context.bot_data and user_id in context.bot_data['user_exams']:
             context.bot_data['user_exams'][user_id] = exam_setup
         
-        await show_all_questions(update, context)
-        await query.delete_message()
+        # به جای حذف پیام، آن را ویرایش کنیم
+        try:
+            await show_all_questions(update, context)
+        except Exception as e:
+            logger.error(f"Error updating message: {e}")
+            # اگر ویرایش ناموفق بود، پیام جدید ارسال نکنیم
     
     elif data == "finish_exam":
         exam_setup['step'] = 'waiting_for_correct_answers'
