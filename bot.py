@@ -120,7 +120,7 @@ async def show_all_questions(update: Update, context: ContextTypes.DEFAULT_TYPE)
         status = f" ✅ (گزینه {current_answer})" if current_answer else ""
         
         # اضافه کردن سوال به متن پیام
-       # message_text += f"{question_num}){status}\n"
+        message_text += f"{question_num}){status}\n"
         
         # ایجاد دکمه‌های گزینه‌ها برای هر سوال با شماره سوال
         question_buttons = []
