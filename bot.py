@@ -120,7 +120,7 @@ async def show_all_questions(update: Update, context: ContextTypes.DEFAULT_TYPE)
         status = f" ✅ (گزینه {current_answer})" if current_answer else ""
         
         # اضافه کردن سوال به متن پیام
-        message_text += f"{question_num}){status}\n"
+       # message_text += f"{question_num}){status}\n"
         
         # ایجاد دکمه‌های گزینه‌ها برای هر سوال با شماره سوال
         question_buttons = []
@@ -168,6 +168,7 @@ def create_progress_bar(percentage):
     return f"[{'█' * filled}{'░' * empty}] {percentage:.1f}%"
 
 # تایمر با پیام پین شده
+# تایمر با پیام پین شده
 async def show_pinned_timer(context: ContextTypes.DEFAULT_TYPE, user_id: int, exam_setup: dict):
     exam_duration = exam_setup.get('exam_duration', 0)
     start_time = exam_setup.get('start_time')
@@ -184,14 +185,8 @@ async def show_pinned_timer(context: ContextTypes.DEFAULT_TYPE, user_id: int, ex
     progress_percent = (elapsed_time / (exam_duration * 60)) * 100
     progress_bar = create_progress_bar(progress_percent)
     
-    timer_text = f"""
-⏰ **زمان آزمون**
-━━━━━━━━━━━━━━━━
-⏳ باقیمانده: `{minutes:02d}:{seconds:02d}`
-{progress_bar}
-📊 پیشرفت: `{progress_percent:.1f}%`
-━━━━━━━━━━━━━━━━
-"""
+    # فقط نوار پیشرفت و زمان باقیمانده نمایش داده شود
+    timer_text = f"⏳ باقیمانده: {minutes:02d}:{seconds:02d}\n{progress_bar}"
     
     # ارسال یا ویرایش پیام تایمر
     if 'timer_message_id' in exam_setup:
