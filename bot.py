@@ -75,6 +75,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     📝 برای شروع یک آزمون جدید، از دستور /new_exam استفاده کنید.
     📊 برای مشاهده نتایج قبلی، از دستور /results استفاده کنید.
+    🆘 برای راهنما، از دستور /help استفاده کنید.
     
     🎯 نحوه استفاده:
     1. با /new_exam آزمون جدید شروع کنید
@@ -98,8 +99,48 @@ async def new_exam(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🔢 لطفاً شماره اولین سوال را وارد کنید:"
     )
 
-# پردازش مراحل ایجاد آزمون
+# نمایش تمام سوالات به صورت همزمان
+async def show_all_questions(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    exam_setup = context.user_data['exam_setup']
+    start_question = exam_setup.get('start_question')
+    end_question = exam_setup.get('end_question')
+    user_answers = exam_setup.get('answers', {})
+    
+    message_text = "📝 لطفاً به سوالات پاسخ دهید:\n\n"
+    
+    # ایجاد دکمه‌های اینلاین برای تمام سوالات
+    keyboard = []
+    
+    for question_num in range(start_question, end_question + 1):
+        # وضعیت پاسخ فعلی
+        current_answer = user_answers.get(str(question_num))
+        status = f" ✅ (گزینه {current_answer})" if current_answer else ""
+        
+        # اضافه کردن سوال به متن پیام
+        message_text += f"{question_num}){status}\n"
+        
+        # ایجاد دکمه‌های گزینه‌ها برای هر سوال
+        question_buttons = []
+        for option in [1, 2, 3, 4]:
+            # اگر این گزینه قبلاً انتخاب شده، علامت ✅ نشان داده شود
+            button_text = f"{option} ✅" if current_answer == option else str(option)
+            question_buttons.append(InlineKeyboardButton(button_text, callback_data=f"ans_{question_num}_{option}"))
+        
+        keyboard.append(question_buttons)
+    
+    # اضافه کردن دکمه اتمام آزمون
+    keyboard.append([InlineKeyboardButton("🎯 اتمام آزمون و ارسال پاسخ‌ها", callback_data="finish_exam")])
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    # ارسال پیام با تمام سوالات
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=message_text,
+        reply_markup=reply_markup
+    )
 
+# پردازش مراحل ایجاد آزمون
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text.strip()
@@ -136,19 +177,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
             
             total_questions = end_question - start_question + 1
-            if total_questions > 100:
-                await update.message.reply_text("❌ حداکثر تعداد سوالات مجاز 100 عدد است.")
+            if total_questions > 50:  # محدودیت برای جلوگیری از پیام بسیار طولانی
+                await update.message.reply_text("❌ حداکثر تعداد سوالات مجاز 50 عدد است.")
                 return
                 
             exam_setup['end_question'] = end_question
             exam_setup['total_questions'] = total_questions
             exam_setup['step'] = 3
-            exam_setup['current_question'] = start_question
             exam_setup['answers'] = {}
             context.user_data['exam_setup'] = exam_setup
             
-            # نمایش اولین سوال
-            await show_question(update, context, start_question)
+            # نمایش تمام سوالات به صورت همزمان
+            await show_all_questions(update, context)
             
         except ValueError:
             await update.message.reply_text("❌ لطفاً یک عدد معتبر وارد کنید.")
@@ -263,47 +303,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # پاک کردن وضعیت آزمون
         context.user_data.pop('exam_setup', None)
 
-# نمایش سوال با دکمه‌های اینلاین
-async def show_question(update: Update, context: ContextTypes.DEFAULT_TYPE, question_num):
-    keyboard = [
-        [
-            InlineKeyboardButton("1", callback_data=f"ans_{question_num}_1"),
-            InlineKeyboardButton("2", callback_data=f"ans_{question_num}_2"),
-            InlineKeyboardButton("3", callback_data=f"ans_{question_num}_3"),
-            InlineKeyboardButton("4", callback_data=f"ans_{question_num}_4"),
-        ]
-    ]
-    
-    # اضافه کردن دکمه‌های navigation
-    exam_setup = context.user_data.get('exam_setup', {})
-    start_question = exam_setup.get('start_question')
-    end_question = exam_setup.get('end_question')
-    
-    nav_buttons = []
-    if question_num > start_question:
-        nav_buttons.append(InlineKeyboardButton("← قبلی", callback_data=f"prev_{question_num}"))
-    if question_num < end_question:
-        nav_buttons.append(InlineKeyboardButton("بعدی →", callback_data=f"next_{question_num}"))
-    
-    if nav_buttons:
-        keyboard.append(nav_buttons)
-    
-    keyboard.append([InlineKeyboardButton("📥 اتمام آزمون", callback_data="finish_exam")])
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    # بررسی اگر پاسخ قبلی داده شده
-    user_answer = exam_setup.get('answers', {}).get(str(question_num))
-    answer_status = f"\n✅ پاسخ داده شده: گزینه {user_answer}" if user_answer else "\n⏸️ هنوز پاسخ نداده‌اید"
-    
-    progress = f"({question_num - start_question + 1}/{end_question - start_question + 1})"
-    
-    await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text=f"❓ سوال شماره {question_num} {progress}{answer_status}\n\nلطفاً گزینه صحیح را انتخاب کنید:",
-        reply_markup=reply_markup
-    )
-
 # مدیریت پاسخ‌های اینلاین
 async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -328,33 +327,9 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         exam_setup['answers'][str(question_num)] = answer
         context.user_data['exam_setup'] = exam_setup
         
-        # نمایش مجدد سوال با وضعیت به روز شده
-        await show_question(update, context, question_num)
+        # نمایش مجدد تمام سوالات با وضعیت به روز شده
+        await show_all_questions(update, context)
         await query.delete_message()
-    
-    elif data.startswith("next_"):
-        # رفتن به سوال بعدی
-        parts = data.split("_")
-        current_question = int(parts[1])
-        next_question = current_question + 1
-        
-        if next_question <= exam_setup.get('end_question'):
-            exam_setup['current_question'] = next_question
-            context.user_data['exam_setup'] = exam_setup
-            await show_question(update, context, next_question)
-            await query.delete_message()
-    
-    elif data.startswith("prev_"):
-        # رفتن به سوال قبلی
-        parts = data.split("_")
-        current_question = int(parts[1])
-        prev_question = current_question - 1
-        
-        if prev_question >= exam_setup.get('start_question'):
-            exam_setup['current_question'] = prev_question
-            context.user_data['exam_setup'] = exam_setup
-            await show_question(update, context, prev_question)
-            await query.delete_message()
     
     elif data == "finish_exam":
         # اتمام آزمون و درخواست پاسخ‌های صحیح
@@ -414,12 +389,12 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     🎯 نحوه کار:
     - با /new_exam شروع کنید
-    - محدوده سوالات را مشخص کنید
+    - محدوده سوالات را مشخص کنید (مثلاً ۱ تا ۲۰)
     - با دکمه‌ها به سوالات پاسخ دهید
     - در پایان، پاسخ‌های صحیح را وارد کنید
     - نتایج را مشاهده کنید
     
-    ⚠️ توجه: هر پاسخ غلط 0.25 نمره منفی دارد.
+    ⚠️ توجه: هر ۳ پاسخ غلط، ۱ پاسخ صحیح را حذف می‌کند.
     """
     await update.message.reply_text(help_text)
 
