@@ -586,6 +586,98 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 # مشاهده نتایج قبلی
+# ابتدا یک تابع برای محاسبه زمان صرف شده اضافه کنید
+def calculate_elapsed_time(start_time):
+    """محاسبه زمان سپری شده از شروع آزمون"""
+    if not start_time:
+        return 0
+    elapsed = datetime.now() - start_time
+    return round(elapsed.total_seconds() / 60, 2)  # بازگشت زمان بر حسب دقیقه
+
+# در تابع handle_answer، بخش اتمام آزمون را اصلاح کنید:
+elif data == "finish_exam":
+    exam_setup['step'] = 'waiting_for_correct_answers'
+    context.user_data['exam_setup'] = exam_setup
+    
+    # محاسبه زمان صرف شده
+    start_time = exam_setup.get('start_time')
+    elapsed_time = calculate_elapsed_time(start_time)
+    exam_setup['elapsed_time'] = elapsed_time
+    
+    # به روزرسانی در bot_data نیز
+    if 'user_exams' in context.bot_data and user_id in context.bot_data['user_exams']:
+        context.bot_data['user_exams'][user_id] = exam_setup
+    
+    # حذف تایمر
+    job_name = f"timer_{user_id}"
+    current_jobs = context.job_queue.get_jobs_by_name(job_name)
+    for job in current_jobs:
+        job.schedule_removal()
+    
+    # آنپین کردن پیام تایمر
+    if 'timer_message_id' in exam_setup:
+        try:
+            await context.bot.unpin_chat_message(
+                chat_id=user_id,
+                message_id=exam_setup['timer_message_id']
+            )
+        except Exception as e:
+            logger.error(f"Error unpinning timer message: {e}")
+    
+    total_questions = exam_setup.get('total_questions')
+    answered_count = len(exam_setup.get('answers', {}))
+    
+    await query.edit_message_text(
+        text=f"📝 آزمون به پایان رسید.\n"
+             f"⏰ زمان صرف شده: {elapsed_time:.2f} دقیقه\n"
+             f"📊 شما به {answered_count} از {total_questions} سوال پاسخ داده‌اید.\n\n"
+             f"لطفاً پاسخ‌های صحیح را به صورت یک رشته {total_questions} رقمی و بدون فاصله ارسال کنید.\n\n"
+             f"📋 مثال: برای {total_questions} سوال: {'1' * total_questions}"
+    )
+
+# در بخش ذخیره نتایج در دیتابیس (تابع handle_message)، فیلد elapsed_time را اضافه کنید:
+# تغییر در بخش ذخیره نتایج:
+try:
+    conn = get_db_connection()
+    if conn:
+        cur = conn.cursor()
+        # ابتدا مطمئن شویم جدول ستون elapsed_time را دارد
+        try:
+            cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name='exams' AND column_name='elapsed_time'")
+            if not cur.fetchone():
+                cur.execute("ALTER TABLE exams ADD COLUMN elapsed_time REAL")
+                conn.commit()
+        except:
+            pass
+        
+        cur.execute(
+            """
+            INSERT INTO exams 
+            (user_id, start_question, end_question, total_questions, exam_duration, elapsed_time, answers, correct_answers, score, wrong_questions, unanswered_questions)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                user_id,
+                exam_setup.get('start_question'),
+                exam_setup.get('end_question'),
+                total_questions,
+                exam_setup.get('exam_duration'),
+                exam_setup.get('elapsed_time', 0),  # زمان صرف شده
+                str(user_answers),
+                cleaned_text,
+                final_percentage,
+                str(wrong_questions),
+                str(unanswered_questions)
+            )
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+        saved_to_db = True
+except Exception as e:
+    logger.error(f"Error saving to database: {e}")
+
+# همچنین در تابع show_results، زمان صرف شده را نیز نمایش دهید:
 async def show_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     
@@ -596,19 +688,40 @@ async def show_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
             
         cur = conn.cursor()
-        cur.execute(
-            "SELECT created_at, score, start_question, end_question, exam_duration FROM exams WHERE user_id = %s ORDER BY created_at DESC LIMIT 5",
-            (user_id,)
-        )
+        # بررسی وجود ستون elapsed_time
+        try:
+            cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name='exams' AND column_name='elapsed_time'")
+            if cur.fetchone():
+                cur.execute(
+                    "SELECT created_at, score, start_question, end_question, exam_duration, elapsed_time FROM exams WHERE user_id = %s ORDER BY created_at DESC LIMIT 5",
+                    (user_id,)
+                )
+            else:
+                cur.execute(
+                    "SELECT created_at, score, start_question, end_question, exam_duration FROM exams WHERE user_id = %s ORDER BY created_at DESC LIMIT 5",
+                    (user_id,)
+                )
+        except:
+            cur.execute(
+                "SELECT created_at, score, start_question, end_question, exam_duration FROM exams WHERE user_id = %s ORDER BY created_at DESC LIMIT 5",
+                (user_id,)
+            )
+        
         results = cur.fetchall()
         cur.close()
         conn.close()
         
         if results:
             result_text = "📋 آخرین نتایج آزمون‌های شما:\n\n"
-            for i, (date, score, start_q, end_q, duration) in enumerate(results, 1):
-                duration_text = f"{duration} دقیقه" if duration > 0 else "بدون محدودیت"
-                result_text += f"{i}. سوالات {start_q}-{end_q} - زمان: {duration_text} - نمره: {score:.2f}% - تاریخ: {date.strftime('%Y-%m-%d %H:%M')}\n"
+            for i, result in enumerate(results, 1):
+                if len(result) == 6:  # اگر elapsed_time وجود دارد
+                    date, score, start_q, end_q, duration, elapsed = result
+                    time_text = f"{elapsed:.1f} دقیقه از {duration} دقیقه" if duration > 0 else f"{elapsed:.1f} دقیقه"
+                else:
+                    date, score, start_q, end_q, duration = result
+                    time_text = f"{duration} دقیقه" if duration > 0 else "بدون محدودیت"
+                
+                result_text += f"{i}. سوالات {start_q}-{end_q} - زمان: {time_text} - نمره: {score:.2f}% - تاریخ: {date.strftime('%Y-%m-%d %H:%M')}\n"
         else:
             result_text = "📭 هیچ نتیجه‌ای برای نمایش وجود ندارد."
     except Exception as e:
