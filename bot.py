@@ -171,6 +171,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # محاسبه نتایج
         user_answers = exam_setup.get('answers', {})
         score = 0
+        correct_questions = []
         wrong_questions = []
         unanswered_questions = []
         
@@ -185,6 +186,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 unanswered_questions.append(i)
             elif user_answer == correct_answer:
                 score += 1
+                correct_questions.append(i)
             else:
                 score -= 0.25  # نمره منفی
                 wrong_questions.append(i)
@@ -224,22 +226,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"Error saving to database: {e}")
         
         # ارسال نتایج به کاربر
-        correct_count = int(score)
+        correct_count = len(correct_questions)
         wrong_count = len(wrong_questions)
         unanswered_count = len(unanswered_questions)
         
         result_text = f"""
-        📊 نتایج آزمون شما:
-        
-        ✅ تعداد سوالات صحیح: {correct_count}
-        ❌ تعداد سوالات غلط: {wrong_count}
-        ⏸️ تعداد سوالات بی‌پاسخ: {unanswered_count}
-        📈 درصد نمره: {percentage:.2f}%
-        📋 نمره خام: {score:.2f} از {total_questions}
-        
-        🔢 سوالات غلط: {', '.join(map(str, wrong_questions)) if wrong_questions else 'ندارد'}
-        🔢 سوالات بی‌پاسخ: {', '.join(map(str, unanswered_questions)) if unanswered_questions else 'ندارد'}
-        """
+📊 نتایج آزمون شما:
+
+✅ تعداد سوالات صحیح: {correct_count}
+🔢 سوالات صحیح: {', '.join(map(str, correct_questions)) if correct_questions else 'ندارد'}
+
+❌ تعداد سوالات غلط: {wrong_count}
+🔢 سوالات غلط: {', '.join(map(str, wrong_questions)) if wrong_questions else 'ندارد'}
+
+⏸️ تعداد سوالات بی‌پاسخ: {unanswered_count}
+🔢 سوالات بی‌پاسخ: {', '.join(map(str, unanswered_questions)) if unanswered_questions else 'ندارد'}
+
+📈 درصد نمره: {percentage:.2f}%
+📋 نمره خام: {score:.2f} از {total_questions}
+"""
         
         if not saved_to_db:
             result_text += "\n\n⚠️ نتایج در پایگاه داده ذخیره نشد (مشکل اتصال)."
@@ -248,7 +253,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # پاک کردن وضعیت آزمون
         context.user_data.pop('exam_setup', None)
-
 # نمایش سوال با دکمه‌های اینلاین
 async def show_question(update: Update, context: ContextTypes.DEFAULT_TYPE, question_num):
     keyboard = [
