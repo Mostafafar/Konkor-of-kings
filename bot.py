@@ -1,7 +1,7 @@
 import os
 import logging
 import asyncio
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters
 import psycopg2
 from psycopg2 import sql
@@ -67,6 +67,14 @@ def init_db():
         logger.error(f"Error initializing database: {e}")
         return False
 
+# ایجاد کیبورد سفارشی
+def get_custom_keyboard():
+    keyboard = [
+        [KeyboardButton("/new_exam"), KeyboardButton("/results")],
+        [KeyboardButton("/help")]
+    ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
 # مدیریت دستور start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -84,7 +92,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     4. در پایان، پاسخ‌های صحیح را وارد کنید
     5. نتایج را مشاهده کنید
     """
-    await update.message.reply_text(welcome_text)
+    await update.message.reply_text(welcome_text, reply_markup=get_custom_keyboard())
 
 # ایجاد آزمون جدید
 async def new_exam(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -96,7 +104,8 @@ async def new_exam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['exam_setup'] = {'step': 1}
     
     await update.message.reply_text(
-        "🔢 لطفاً شماره اولین سوال را وارد کنید:"
+        "🔢 لطفاً شماره اولین سوال را وارد کنید:",
+        reply_markup=get_custom_keyboard()
     )
 
 # نمایش تمام سوالات به صورت همزمان
@@ -119,11 +128,14 @@ async def show_all_questions(update: Update, context: ContextTypes.DEFAULT_TYPE)
         # اضافه کردن سوال به متن پیام
         message_text += f"{question_num}){status}\n"
         
-        # ایجاد دکمه‌های گزینه‌ها برای هر سوال
+        # ایجاد دکمه‌های گزینه‌ها برای هر سوال با شماره سوال
         question_buttons = []
         for option in [1, 2, 3, 4]:
+            # اضافه کردن شماره سوال به متن دکمه
+            button_text = f"{question_num}-{option}"
             # اگر این گزینه قبلاً انتخاب شده، علامت ✅ نشان داده شود
-            button_text = f"{option} ✅" if current_answer == option else str(option)
+            if current_answer == option:
+                button_text += " ✅"
             question_buttons.append(InlineKeyboardButton(button_text, callback_data=f"ans_{question_num}_{option}"))
         
         keyboard.append(question_buttons)
@@ -146,7 +158,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     
     if 'exam_setup' not in context.user_data:
-        await update.message.reply_text("لطفا ابتدا با دستور /new_exam یک آزمون جدید شروع کنید.")
+        await update.message.reply_text("لطفا ابتدا با دستور /new_exam یک آزمون جدید شروع کنید.", reply_markup=get_custom_keyboard())
         return
     
     exam_setup = context.user_data['exam_setup']
@@ -155,17 +167,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             start_question = int(text)
             if start_question <= 0:
-                await update.message.reply_text("❌ شماره سوال باید بزرگتر از صفر باشد.")
+                await update.message.reply_text("❌ شماره سوال باید بزرگتر از صفر باشد.", reply_markup=get_custom_keyboard())
                 return
                 
             exam_setup['start_question'] = start_question
             exam_setup['step'] = 2
             context.user_data['exam_setup'] = exam_setup
             await update.message.reply_text(
-                "🔢 لطفاً شماره آخرین سوال را وارد کنید:"
+                "🔢 لطفاً شماره آخرین سوال را وارد کنید:",
+                reply_markup=get_custom_keyboard()
             )
         except ValueError:
-            await update.message.reply_text("❌ لطفاً یک عدد معتبر وارد کنید.")
+            await update.message.reply_text("❌ لطفاً یک عدد معتبر وارد کنید.", reply_markup=get_custom_keyboard())
     
     elif exam_setup.get('step') == 2:
         try:
@@ -173,12 +186,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             start_question = exam_setup.get('start_question')
             
             if end_question <= start_question:
-                await update.message.reply_text("❌ شماره آخرین سوال باید بزرگتر از اولین سوال باشد.")
+                await update.message.reply_text("❌ شماره آخرین سوال باید بزرگتر از اولین سوال باشد.", reply_markup=get_custom_keyboard())
                 return
             
             total_questions = end_question - start_question + 1
             if total_questions > 50:  # محدودیت برای جلوگیری از پیام بسیار طولانی
-                await update.message.reply_text("❌ حداکثر تعداد سوالات مجاز 50 عدد است.")
+                await update.message.reply_text("❌ حداکثر تعداد سوالات مجاز 50 عدد است.", reply_markup=get_custom_keyboard())
                 return
                 
             exam_setup['end_question'] = end_question
@@ -191,7 +204,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await show_all_questions(update, context)
             
         except ValueError:
-            await update.message.reply_text("❌ لطفاً یک عدد معتبر وارد کنید.")
+            await update.message.reply_text("❌ لطفاً یک عدد معتبر وارد کنید.", reply_markup=get_custom_keyboard())
     
     elif exam_setup.get('step') == 'waiting_for_correct_answers':
         total_questions = exam_setup.get('total_questions')
@@ -202,7 +215,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # بررسی صحت فرمت پاسخ‌ها
         if len(cleaned_text) != total_questions:
             await update.message.reply_text(
-                f"❌ رشته ارسالی باید شامل {total_questions} عدد باشد. شما {len(cleaned_text)} عدد وارد کردید. لطفاً مجدداً وارد کنید:"
+                f"❌ رشته ارسالی باید شامل {total_questions} عدد باشد. شما {len(cleaned_text)} عدد وارد کردید. لطفاً مجدداً وارد کنید:",
+                reply_markup=get_custom_keyboard()
             )
             return
         
@@ -298,7 +312,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not saved_to_db:
             result_text += "\n\n⚠️ نتایج در پایگاه داده ذخیره نشد (مشکل اتصال)."
         
-        await update.message.reply_text(result_text)
+        await update.message.reply_text(result_text, reply_markup=get_custom_keyboard())
         
         # پاک کردن وضعیت آزمون
         context.user_data.pop('exam_setup', None)
@@ -353,7 +367,7 @@ async def show_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         conn = get_db_connection()
         if conn is None:
-            await update.message.reply_text("⚠️ در حال حاضر امکان دسترسی به تاریخچه نتایج وجود ندارد.")
+            await update.message.reply_text("⚠️ در حال حاضر امکان دسترسی به تاریخچه نتایج وجود ندارد.", reply_markup=get_custom_keyboard())
             return
             
         cur = conn.cursor()
@@ -375,7 +389,7 @@ async def show_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Error retrieving results: {e}")
         result_text = "⚠️ خطایی در دریافت نتایج رخ داد."
     
-    await update.message.reply_text(result_text)
+    await update.message.reply_text(result_text, reply_markup=get_custom_keyboard())
 
 # راهنمای استفاده
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -396,7 +410,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     ⚠️ توجه: هر ۳ پاسخ غلط، ۱ پاسخ صحیح را حذف می‌کند.
     """
-    await update.message.reply_text(help_text)
+    await update.message.reply_text(help_text, reply_markup=get_custom_keyboard())
 
 # تابع اصلی
 def main():
