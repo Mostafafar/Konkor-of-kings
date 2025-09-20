@@ -124,23 +124,7 @@ def get_tehran_time():
 # مدیریت دستور start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    welcome_text = """
-    🤖 به ربات آزمون تستی خوش آمدید!
-
-    📝 برای شروع یک آزمون جدید، از دستور /new_exam استفاده کنید.
-    📊 برای مشاهده نتایج قبلی، از دستور /results استفاده کنید.
-    🆘 برای راهنما، از دستور /help استفاده کنید.
-    
-    🎯 نحوه استفاده:
-    1. با /new_exam شروع کنید
-    2. نام درس و مبحث را وارد کنید
-    3. محدوده سوالات و زمان آزمون را مشخص کنید
-    4. با دکمه‌ها به سوالات پاسخ دهید
-    5. در پایان، پاسخ‌های صحیح را وارد کنید
-    6. نتایج را مشاهده کنید
-    
-    ⏰ دارای تایمر پیشرفته برای مدیریت زمان آزمون
-    """
+    welcome_text = "🎯 بیایید پاسخبرگ بسازیم و رقابت کنیم!\n\nبرای شروع از دستور /ساخت_پاسخبرگ استفاده کنید."
     await update.message.reply_text(welcome_text)
 
 # ایجاد آزمون جدید
@@ -388,7 +372,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     
     if 'exam_setup' not in context.user_data:
-        await update.message.reply_text("لطفا ابتدا با دستور /new_exam یک آزمون جدید شروع کنید.")
+        await update.message.reply_text("لطفا ابتدا با دستور /ساخت_پاسخبرگ یک آزمون جدید شروع کنید.")
         return
     
     exam_setup = context.user_data['exam_setup']
@@ -661,7 +645,7 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     if 'exam_setup' not in context.user_data:
-        await query.edit_message_text("⚠️ لطفا ابتدا با /new_exam یک آزمون جدید شروع کنید.")
+        await query.edit_message_text("⚠️ لطفا ابتدا با /ساخت_پاسخبرگ یک آزمون جدید شروع کنید.")
         return
         
     exam_setup = context.user_data['exam_setup']
@@ -785,34 +769,6 @@ async def show_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(result_text)
 
-# راهنمای استفاده
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    help_text = """
-    📖 راهنمای استفاده از ربات آزمون تستی:
-    
-    1. /start - شروع کار با ربات
-    2. /new_exam - ایجاد یک آزمون جدید
-    3. /results - مشاهده نتایج قبلی
-    4. /help - نمایش این راهنما
-    
-    🎯 نحوه کار:
-    - با /new_exam شروع کنید
-    - نام درس و مبحث را وارد کنید
-    - محدوده سوالات و زمان آزمون را مشخص کنید
-    - با دکمه‌ها به سوالات پاسخ دهید
-    - در پایان، پاسخ‌های صحیح را وارد کنید
-    - نتایج را مشاهده کنید
-    
-    ⏰ ویژگی‌های تایمر:
-    - نمایش زمان باقیمانده به صورت زنده
-    - پیام تایمر پین شده در بالای چت
-    - نوار پیشرفت گرافیکی
-    - اتمام خودکار آزمون هنگام اتمام زمان
-    
-    ⚠️ توجه: هر ۳ پاسخ غلط، ۱ پاسخ صحیح را حذف می‌کند.
-    """
-    await update.message.reply_text(help_text)
-
 # تابع اصلی
 def main():
     if not init_db():
@@ -821,9 +777,8 @@ def main():
     application = Application.builder().token(TOKEN).build()
     
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("new_exam", new_exam))
-    application.add_handler(CommandHandler("results", show_results))
-    application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("ساخت_پاسخبرگ", new_exam))
+    application.add_handler(CommandHandler("گزارش", show_results))
     application.add_handler(CallbackQueryHandler(handle_answer))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
