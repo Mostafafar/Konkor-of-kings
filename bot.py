@@ -5,7 +5,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters
 import psycopg2
 from psycopg2 import sql
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # تنظیمات لاگ
 logging.basicConfig(
@@ -50,6 +50,7 @@ def init_db():
                 start_question INTEGER,
                 end_question INTEGER,
                 total_questions INTEGER,
+                exam_duration INTEGER,
                 answers TEXT,
                 correct_answers TEXT,
                 score REAL,
@@ -78,11 +79,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     🆘 برای راهنما، از دستور /help استفاده کنید.
     
     🎯 نحوه استفاده:
-    1. با /new_exam آزمون جدید شروع کنید
-    2. شماره اولین و آخرین سوال را وارد کنید
-    3. به سوالات با دکمه‌ها پاسخ دهید
+    1. با /new_exam شروع کنید
+    2. محدوده سوالات و زمان آزمون را مشخص کنید
+    3. با دکمه‌ها به سوالات پاسخ دهید
     4. در پایان، پاسخ‌های صحیح را وارد کنید
     5. نتایج را مشاهده کنید
+    
+    ⏰ دارای تایمر پیشرفته برای مدیریت زمان آزمون
     """
     await update.message.reply_text(welcome_text)
 
@@ -99,14 +102,26 @@ async def new_exam(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🔢 لطفاً شماره اولین سوال را وارد کنید:"
     )
 
-# نمایش تمام سوالات به صورت همزمان با فرمت جدید
+# نمایش تمام سوالات به صورت همزمان با فرمت جدید و تایمر
 async def show_all_questions(update: Update, context: ContextTypes.DEFAULT_TYPE):
     exam_setup = context.user_data['exam_setup']
     start_question = exam_setup.get('start_question')
     end_question = exam_setup.get('end_question')
     user_answers = exam_setup.get('answers', {})
+    exam_duration = exam_setup.get('exam_duration', 0)
+    start_time = exam_setup.get('start_time', datetime.now())
     
-    message_text = "📝 لطفاً به سوالات پاسخ دهید:\n\n"
+    # محاسبه زمان باقیمانده
+    if exam_duration > 0:
+        elapsed_time = (datetime.now() - start_time).total_seconds()
+        remaining_time = max(0, exam_duration * 60 - elapsed_time)
+        minutes = int(remaining_time // 60)
+        seconds = int(remaining_time % 60)
+        time_display = f"⏰ زمان باقیمانده: {minutes:02d}:{seconds:02d}\n\n"
+    else:
+        time_display = ""
+    
+    message_text = f"{time_display}📝 لطفاً به سوالات پاسخ دهید:\n\n"
     
     # ایجاد دکمه‌های اینلاین برای تمام سوالات
     keyboard = []
@@ -136,12 +151,162 @@ async def show_all_questions(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    # ارسال پیام با تمام سوالات
-    await context.bot.send_message(
+    # اگر قبلاً پیامی ارسال شده، آن را ویرایش کن
+    if 'exam_message_id' in exam_setup:
+        try:
+            await context.bot.edit_message_text(
+                chat_id=update.effective_chat.id,
+                message_id=exam_setup['exam_message_id'],
+                text=message_text,
+                reply_markup=reply_markup
+            )
+            return
+        except Exception as e:
+            logger.error(f"Error editing message: {e}")
+    
+    # ارسال پیام جدید و ذخیره ID آن
+    message = await context.bot.send_message(
         chat_id=update.effective_chat.id,
         text=message_text,
         reply_markup=reply_markup
     )
+    exam_setup['exam_message_id'] = message.message_id
+    context.user_data['exam_setup'] = exam_setup
+
+# تایمر برای به روزرسانی زمان
+async def update_timer(context: ContextTypes.DEFAULT_TYPE):
+    job = context.job
+    user_id = job.chat_id
+    user_data = context.application.user_data
+    
+    if user_id not in user_data or 'exam_setup' not in user_data[user_id]:
+        return
+    
+    exam_setup = user_data[user_id]['exam_setup']
+    
+    if exam_setup.get('step') != 3:  # اگر در مرحله آزمون نیست
+        return
+    
+    exam_duration = exam_setup.get('exam_duration', 0)
+    start_time = exam_setup.get('start_time')
+    
+    if not exam_duration or not start_time:
+        return
+    
+    # محاسبه زمان باقیمانده
+    elapsed_time = (datetime.now() - start_time).total_seconds()
+    remaining_time = max(0, exam_duration * 60 - elapsed_time)
+    
+    # اگر زمان تمام شد
+    if remaining_time <= 0:
+        await finish_exam_auto(context, user_id)
+        return
+    
+    # به روزرسانی نمایش زمان
+    try:
+        await show_all_questions_for_timer(context, user_id)
+    except Exception as e:
+        logger.error(f"Error updating timer: {e}")
+
+# نمایش سوالات برای تایمر
+async def show_all_questions_for_timer(context: ContextTypes.DEFAULT_TYPE, user_id: int):
+    user_data = context.application.user_data
+    if user_id not in user_data or 'exam_setup' not in user_data[user_id]:
+        return
+    
+    exam_setup = user_data[user_id]['exam_setup']
+    start_question = exam_setup.get('start_question')
+    end_question = exam_setup.get('end_question')
+    user_answers = exam_setup.get('answers', {})
+    exam_duration = exam_setup.get('exam_duration', 0)
+    start_time = exam_setup.get('start_time', datetime.now())
+    
+    # محاسبه زمان باقیمانده
+    elapsed_time = (datetime.now() - start_time).total_seconds()
+    remaining_time = max(0, exam_duration * 60 - elapsed_time)
+    minutes = int(remaining_time // 60)
+    seconds = int(remaining_time % 60)
+    
+    # ایجاد نماد ساعت شنی بر اساس زمان باقیمانده
+    if remaining_time < 60:  # کمتر از 1 دقیقه
+        sandglass = "⏳"
+    elif remaining_time < 300:  # کمتر از 5 دقیقه
+        sandglass = "⌛"
+    else:
+        sandglass = "⏰"
+    
+    time_display = f"{sandglass} زمان باقیمانده: {minutes:02d}:{seconds:02d}\n\n"
+    
+    message_text = f"{time_display}📝 لطفاً به سوالات پاسخ دهید:\n\n"
+    
+    # ایجاد دکمه‌های اینلاین برای تمام سوالات
+    keyboard = []
+    
+    for question_num in range(start_question, end_question + 1):
+        # وضعیت پاسخ فعلی
+        current_answer = user_answers.get(str(question_num))
+        status = f" ✅ (گزینه {current_answer})" if current_answer else ""
+        
+        # اضافه کردن سوال به متن پیام
+        message_text += f"{question_num}){status}\n"
+        
+        # ایجاد دکمه‌های گزینه‌ها برای هر سوال با شماره سوال
+        question_buttons = []
+        question_buttons.append(InlineKeyboardButton(f"{question_num}", callback_data="ignore"))
+        
+        for option in [1, 2, 3, 4]:
+            button_text = f"{option} ✅" if current_answer == option else str(option)
+            question_buttons.append(InlineKeyboardButton(button_text, callback_data=f"ans_{question_num}_{option}"))
+        
+        keyboard.append(question_buttons)
+    
+    keyboard.append([InlineKeyboardButton("🎯 اتمام آزمون و ارسال پاسخ‌ها", callback_data="finish_exam")])
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    # ویرایش پیام
+    if 'exam_message_id' in exam_setup:
+        try:
+            await context.bot.edit_message_text(
+                chat_id=user_id,
+                message_id=exam_setup['exam_message_id'],
+                text=message_text,
+                reply_markup=reply_markup
+            )
+        except Exception as e:
+            logger.error(f"Error updating message: {e}")
+
+# اتمام خودکار آزمون وقتی زمان تمام شد
+async def finish_exam_auto(context: ContextTypes.DEFAULT_TYPE, user_id: int):
+    user_data = context.application.user_data
+    if user_id not in user_data or 'exam_setup' not in user_data[user_id]:
+        return
+    
+    exam_setup = user_data[user_id]['exam_setup']
+    
+    # تغییر وضعیت به انتظار برای پاسخ‌های صحیح
+    exam_setup['step'] = 'waiting_for_correct_answers'
+    user_data[user_id]['exam_setup'] = exam_setup
+    
+    # حذف job تایمر
+    job_name = f"timer_{user_id}"
+    current_jobs = context.job_queue.get_jobs_by_name(job_name)
+    for job in current_jobs:
+        job.schedule_removal()
+    
+    total_questions = exam_setup.get('total_questions')
+    answered_count = len(exam_setup.get('answers', {}))
+    
+    # ارسال پیام اتمام زمان
+    try:
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=f"⏰ زمان آزمون به پایان رسید!\n"
+                 f"📊 شما به {answered_count} از {total_questions} سوال پاسخ داده‌اید.\n\n"
+                 f"لطفاً پاسخ‌های صحیح را به صورت یک رشته {total_questions} رقمی و بدون فاصله ارسال کنید.\n\n"
+                 f"📋 مثال: برای {total_questions} سوال: {'1' * total_questions}"
+        )
+    except Exception as e:
+        logger.error(f"Error sending auto-finish message: {e}")
 
 # پردازش مراحل ایجاد آزمون
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -180,15 +345,51 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
             
             total_questions = end_question - start_question + 1
-            if total_questions > 50:  # محدودیت برای جلوگیری از پیام بسیار طولانی
+            if total_questions > 50:
                 await update.message.reply_text("❌ حداکثر تعداد سوالات مجاز 50 عدد است.")
                 return
                 
             exam_setup['end_question'] = end_question
             exam_setup['total_questions'] = total_questions
             exam_setup['step'] = 3
-            exam_setup['answers'] = {}
             context.user_data['exam_setup'] = exam_setup
+            
+            await update.message.reply_text(
+                "⏰ لطفاً مدت زمان آزمون را به دقیقه وارد کنید (0 برای بدون محدودیت):"
+            )
+            
+        except ValueError:
+            await update.message.reply_text("❌ لطفاً یک عدد معتبر وارد کنید.")
+    
+    elif exam_setup.get('step') == 3:
+        try:
+            exam_duration = int(text)
+            if exam_duration < 0:
+                await update.message.reply_text("❌ زمان آزمون نمی‌تواند منفی باشد.")
+                return
+                
+            exam_setup['exam_duration'] = exam_duration
+            exam_setup['step'] = 4
+            exam_setup['answers'] = {}
+            exam_setup['start_time'] = datetime.now()
+            context.user_data['exam_setup'] = exam_setup
+            
+            # شروع تایمر اگر زمان مشخص شده
+            if exam_duration > 0:
+                job_name = f"timer_{user_id}"
+                # حذف jobهای قبلی
+                current_jobs = context.application.job_queue.get_jobs_by_name(job_name)
+                for job in current_jobs:
+                    job.schedule_removal()
+                
+                # ایجاد job جدید برای تایمر
+                context.application.job_queue.run_repeating(
+                    update_timer,
+                    interval=5,  # به روزرسانی هر 5 ثانیه
+                    first=1,
+                    chat_id=user_id,
+                    name=job_name
+                )
             
             # نمایش تمام سوالات به صورت همزمان
             await show_all_questions(update, context)
@@ -202,17 +403,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # حذف فاصله و کاراکترهای غیرعددی
         cleaned_text = ''.join(filter(str.isdigit, text))
         
-        # بررسی صحت فرمت پاسخ‌ها
         if len(cleaned_text) != total_questions:
             await update.message.reply_text(
                 f"❌ رشته ارسالی باید شامل {total_questions} عدد باشد. شما {len(cleaned_text)} عدد وارد کردید. لطفاً مجدداً وارد کنید:"
             )
             return
         
-        # تبدیل رشته به لیست اعداد
         correct_answers = [int(char) for char in cleaned_text]
-        
-        # محاسبه نتایج
         user_answers = exam_setup.get('answers', {})
         correct_questions = []
         wrong_questions = []
@@ -221,7 +418,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         start_q = exam_setup.get('start_question')
         end_q = exam_setup.get('end_question')
         
-        # تشخیص سوالات صحیح، غلط و بی‌پاسخ
         for i in range(start_q, end_q + 1):
             user_answer = user_answers.get(str(i))
             correct_answer = correct_answers[i - start_q]
@@ -233,22 +429,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 wrong_questions.append(i)
         
-        # محاسبه بر اساس روش عکس
         correct_count = len(correct_questions)
         wrong_count = len(wrong_questions)
         unanswered_count = len(unanswered_questions)
         
-        # درصد بدون نمره منفی
         percentage_without_penalty = (correct_count / total_questions) * 100 if total_questions > 0 else 0
         
-        # محاسبه نمره با اعمال نمره منفی (هر 3 غلط، 1 صحیح را حذف می‌کند)
         penalty_deduction = wrong_count // 3
         final_score = max(0, correct_count - penalty_deduction)
-        
-        # درصد با نمره منفی
         final_percentage = (final_score / total_questions) * 100 if total_questions > 0 else 0
         
-        # ذخیره نتایج در دیتابیس (اگر ممکن باشد)
+        # ذخیره نتایج در دیتابیس
         saved_to_db = False
         try:
             conn = get_db_connection()
@@ -257,14 +448,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 cur.execute(
                     """
                     INSERT INTO exams 
-                    (user_id, start_question, end_question, total_questions, answers, correct_answers, score, wrong_questions, unanswered_questions)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    (user_id, start_question, end_question, total_questions, exam_duration, answers, correct_answers, score, wrong_questions, unanswered_questions)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         user_id,
                         exam_setup.get('start_question'),
                         exam_setup.get('end_question'),
                         total_questions,
+                        exam_setup.get('exam_duration'),
                         str(user_answers),
                         cleaned_text,
                         final_percentage,
@@ -279,7 +471,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.error(f"Error saving to database: {e}")
         
-        # ارسال نتایج به کاربر مطابق عکس
+        # ارسال نتایج
         result_text = f"""
 📊 نتایج آزمون شما:
 
@@ -303,8 +495,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await update.message.reply_text(result_text)
         
-        # پاک کردن وضعیت آزمون
+        # پاک کردن وضعیت آزمون و تایمر
         context.user_data.pop('exam_setup', None)
+        job_name = f"timer_{user_id}"
+        current_jobs = context.application.job_queue.get_jobs_by_name(job_name)
+        for job in current_jobs:
+            job.schedule_removal()
 
 # مدیریت پاسخ‌های اینلاین
 async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -315,7 +511,6 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     
     if data == "ignore":
-        # اگر کاربر روی شماره سوال کلیک کرد، هیچ کاری نکن
         return
     
     if 'exam_setup' not in context.user_data:
@@ -325,23 +520,25 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     exam_setup = context.user_data['exam_setup']
     
     if data.startswith("ans_"):
-        # پردازش پاسخ کاربر
         parts = data.split("_")
         question_num = int(parts[1])
         answer = int(parts[2])
         
-        # ذخیره پاسخ
         exam_setup['answers'][str(question_num)] = answer
         context.user_data['exam_setup'] = exam_setup
         
-        # نمایش مجدد تمام سوالات با وضعیت به روز شده
         await show_all_questions(update, context)
         await query.delete_message()
     
     elif data == "finish_exam":
-        # اتمام آزمون و درخواست پاسخ‌های صحیح
         exam_setup['step'] = 'waiting_for_correct_answers'
         context.user_data['exam_setup'] = exam_setup
+        
+        # حذف تایمر
+        job_name = f"timer_{user_id}"
+        current_jobs = context.application.job_queue.get_jobs_by_name(job_name)
+        for job in current_jobs:
+            job.schedule_removal()
         
         total_questions = exam_setup.get('total_questions')
         answered_count = len(exam_setup.get('answers', {}))
@@ -365,7 +562,7 @@ async def show_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
         cur = conn.cursor()
         cur.execute(
-            "SELECT created_at, score, start_question, end_question FROM exams WHERE user_id = %s ORDER BY created_at DESC LIMIT 5",
+            "SELECT created_at, score, start_question, end_question, exam_duration FROM exams WHERE user_id = %s ORDER BY created_at DESC LIMIT 5",
             (user_id,)
         )
         results = cur.fetchall()
@@ -374,8 +571,9 @@ async def show_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         if results:
             result_text = "📋 آخرین نتایج آزمون‌های شما:\n\n"
-            for i, (date, score, start_q, end_q) in enumerate(results, 1):
-                result_text += f"{i}. سوالات {start_q}-{end_q} - تاریخ: {date.strftime('%Y-%m-%d %H:%M')} - نمره: {score:.2f}%\n"
+            for i, (date, score, start_q, end_q, duration) in enumerate(results, 1):
+                duration_text = f"{duration} دقیقه" if duration > 0 else "بدون محدودیت"
+                result_text += f"{i}. سوالات {start_q}-{end_q} - زمان: {duration_text} - نمره: {score:.2f}% - تاریخ: {date.strftime('%Y-%m-%d %H:%M')}\n"
         else:
             result_text = "📭 هیچ نتیجه‌ای برای نمایش وجود ندارد."
     except Exception as e:
@@ -396,10 +594,15 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     🎯 نحوه کار:
     - با /new_exam شروع کنید
-    - محدوده سوالات را مشخص کنید (مثلاً ۱ تا ۲۰)
+    - محدوده سوالات و زمان آزمون را مشخص کنید
     - با دکمه‌ها به سوالات پاسخ دهید
     - در پایان، پاسخ‌های صحیح را وارد کنید
     - نتایج را مشاهده کنید
+    
+    ⏰ ویژگی‌های تایمر:
+    - نمایش زمان باقیمانده به صورت زنده
+    - اتمام خودکار آزمون هنگام اتمام زمان
+    - نماد ساعت شنی متغیر بر اساس زمان باقیمانده
     
     ⚠️ توجه: هر ۳ پاسخ غلط، ۱ پاسخ صحیح را حذف می‌کند.
     """
@@ -407,14 +610,11 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # تابع اصلی
 def main():
-    # ایجاد جدول در دیتابیس
     if not init_db():
         logger.warning("Database initialization failed. The bot will work without database support.")
     
-    # ایجاد اپلیکیشن
     application = Application.builder().token(TOKEN).build()
     
-    # اضافه کردن handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("new_exam", new_exam))
     application.add_handler(CommandHandler("results", show_results))
@@ -422,8 +622,7 @@ def main():
     application.add_handler(CallbackQueryHandler(handle_answer))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
-    # اجرای ربات
-    logger.info("Bot started...")
+    logger.info("Bot started with timer feature...")
     application.run_polling()
 
 if __name__ == "__main__":
