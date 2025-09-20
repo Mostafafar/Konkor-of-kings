@@ -14,25 +14,34 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# توکن ربات - باید از BotFather دریافت کنید
+# توکن ربات
 TOKEN = "8211286788:AAEf0nacvSZy7uXfUmcxNDkGquujQuvYzbE"
 
-# تنظیمات دیتابیس - با اطلاعات واقعی جایگزین کنید
+# تنظیمات دیتابیس
 DB_CONFIG = {
     'dbname': 'exam_bot',
     'user': 'bot_user',
-    'password': 'your_password',
+    'password': 'bot_password',
     'host': 'localhost',
     'port': '5432'
 }
 
 def get_db_connection():
-    return psycopg2.connect(**DB_CONFIG)
+    try:
+        conn = psycopg2.connect(**DB_CONFIG)
+        return conn
+    except Exception as e:
+        logger.error(f"Database connection error: {e}")
+        return None
 
 # ایجاد جدول در دیتابیس
 def init_db():
     try:
         conn = get_db_connection()
+        if conn is None:
+            logger.error("Failed to connect to database for initialization")
+            return False
+            
         cur = conn.cursor()
         cur.execute('''
             CREATE TABLE IF NOT EXISTS exams (
@@ -53,8 +62,10 @@ def init_db():
         cur.close()
         conn.close()
         logger.info("Database initialized successfully")
+        return True
     except Exception as e:
         logger.error(f"Error initializing database: {e}")
+        return False
 
 # مدیریت دستور start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -64,13 +75,23 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     📝 برای شروع یک آزمون جدید، از دستور /new_exam استفاده کنید.
     📊 برای مشاهده نتایج قبلی، از دستور /results استفاده کنید.
+    
+    🎯 نحوه استفاده:
+    1. با /new_exam آزمون جدید شروع کنید
+    2. شماره اولین و آخرین سوال را وارد کنید
+    3. به سوالات با دکمه‌ها پاسخ دهید
+    4. در پایان، پاسخ‌های صحیح را وارد کنید
+    5. نتایج را مشاهده کنید
     """
     await update.message.reply_text(welcome_text)
 
 # ایجاد آزمون جدید
 async def new_exam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    # ذخیره وضعیت کاربر برای مراحل بعدی
+    # پاک کردن وضعیت قبلی
+    context.user_data.pop('exam_setup', None)
+    
+    # ایجاد وضعیت جدید
     context.user_data['exam_setup'] = {'step': 1}
     
     await update.message.reply_text(
@@ -80,12 +101,13 @@ async def new_exam(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # پردازش مراحل ایجاد آزمون
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    text = update.message.text
-    exam_setup = context.user_data.get('exam_setup', {})
+    text = update.message.text.strip()
     
     if 'exam_setup' not in context.user_data:
         await update.message.reply_text("لطفا ابتدا با دستور /new_exam یک آزمون جدید شروع کنید.")
         return
+    
+    exam_setup = context.user_data['exam_setup']
     
     if exam_setup.get('step') == 1:
         try:
@@ -113,6 +135,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
             
             total_questions = end_question - start_question + 1
+            if total_questions > 100:
+                await update.message.reply_text("❌ حداکثر تعداد سوالات مجاز 100 عدد است.")
+                return
+                
             exam_setup['end_question'] = end_question
             exam_setup['total_questions'] = total_questions
             exam_setup['step'] = 3
@@ -129,15 +155,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif exam_setup.get('step') == 'waiting_for_correct_answers':
         total_questions = exam_setup.get('total_questions')
         
+        # حذف فاصله و کاراکترهای غیرعددی
+        cleaned_text = ''.join(filter(str.isdigit, text))
+        
         # بررسی صحت فرمت پاسخ‌ها
-        if len(text) != total_questions or not text.isdigit():
+        if len(cleaned_text) != total_questions:
             await update.message.reply_text(
-                f"❌ رشته ارسالی باید شامل {total_questions} عدد باشد. لطفاً مجدداً وارد کنید:"
+                f"❌ رشته ارسالی باید شامل {total_questions} عدد باشد. شما {len(cleaned_text)} عدد وارد کردید. لطفاً مجدداً وارد کنید:"
             )
             return
         
         # تبدیل رشته به لیست اعداد
-        correct_answers = [int(char) for char in text]
+        correct_answers = [int(char) for char in cleaned_text]
         
         # محاسبه نتایج
         user_answers = exam_setup.get('answers', {})
@@ -163,37 +192,39 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # محاسبه درصد
         percentage = (score / total_questions) * 100 if total_questions > 0 else 0
         
-        # ذخیره نتایج در دیتابیس
+        # ذخیره نتایج در دیتابیس (اگر ممکن باشد)
+        saved_to_db = False
         try:
             conn = get_db_connection()
-            cur = conn.cursor()
-            cur.execute(
-                """
-                INSERT INTO exams 
-                (user_id, start_question, end_question, total_questions, answers, correct_answers, score, wrong_questions, unanswered_questions)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """,
-                (
-                    user_id,
-                    exam_setup.get('start_question'),
-                    exam_setup.get('end_question'),
-                    total_questions,
-                    str(user_answers),
-                    text,
-                    percentage,
-                    str(wrong_questions),
-                    str(unanswered_questions)
+            if conn:
+                cur = conn.cursor()
+                cur.execute(
+                    """
+                    INSERT INTO exams 
+                    (user_id, start_question, end_question, total_questions, answers, correct_answers, score, wrong_questions, unanswered_questions)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        user_id,
+                        exam_setup.get('start_question'),
+                        exam_setup.get('end_question'),
+                        total_questions,
+                        str(user_answers),
+                        cleaned_text,
+                        percentage,
+                        str(wrong_questions),
+                        str(unanswered_questions)
+                    )
                 )
-            )
-            conn.commit()
-            cur.close()
-            conn.close()
+                conn.commit()
+                cur.close()
+                conn.close()
+                saved_to_db = True
         except Exception as e:
             logger.error(f"Error saving to database: {e}")
-            await update.message.reply_text("⚠️ خطایی در ذخیره نتایج رخ داد. لطفاً بعداً مجدداً تلاش کنید.")
         
         # ارسال نتایج به کاربر
-        correct_count = int(score * 4) // 4 if score > 0 else 0
+        correct_count = int(score)
         wrong_count = len(wrong_questions)
         unanswered_count = len(unanswered_questions)
         
@@ -204,10 +235,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ❌ تعداد سوالات غلط: {wrong_count}
         ⏸️ تعداد سوالات بی‌پاسخ: {unanswered_count}
         📈 درصد نمره: {percentage:.2f}%
+        📋 نمره خام: {score:.2f} از {total_questions}
         
         🔢 سوالات غلط: {', '.join(map(str, wrong_questions)) if wrong_questions else 'ندارد'}
         🔢 سوالات بی‌پاسخ: {', '.join(map(str, unanswered_questions)) if unanswered_questions else 'ندارد'}
         """
+        
+        if not saved_to_db:
+            result_text += "\n\n⚠️ نتایج در پایگاه داده ذخیره نشد (مشکل اتصال)."
         
         await update.message.reply_text(result_text)
         
@@ -232,24 +267,26 @@ async def show_question(update: Update, context: ContextTypes.DEFAULT_TYPE, ques
     
     nav_buttons = []
     if question_num > start_question:
-        nav_buttons.append(InlineKeyboardButton("← سوال قبلی", callback_data=f"prev_{question_num}"))
+        nav_buttons.append(InlineKeyboardButton("← قبلی", callback_data=f"prev_{question_num}"))
     if question_num < end_question:
-        nav_buttons.append(InlineKeyboardButton("سوال بعدی →", callback_data=f"next_{question_num}"))
+        nav_buttons.append(InlineKeyboardButton("بعدی →", callback_data=f"next_{question_num}"))
     
     if nav_buttons:
         keyboard.append(nav_buttons)
     
-    keyboard.append([InlineKeyboardButton("اتمام آزمون", callback_data="finish_exam")])
+    keyboard.append([InlineKeyboardButton("📥 اتمام آزمون", callback_data="finish_exam")])
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     # بررسی اگر پاسخ قبلی داده شده
     user_answer = exam_setup.get('answers', {}).get(str(question_num))
-    answer_status = f" (پاسخ داده شده: {user_answer})" if user_answer else ""
+    answer_status = f"\n✅ پاسخ داده شده: گزینه {user_answer}" if user_answer else "\n⏸️ هنوز پاسخ نداده‌اید"
+    
+    progress = f"({question_num - start_question + 1}/{end_question - start_question + 1})"
     
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
-        text=f"❓ سوال شماره {question_num}:{answer_status}\nلطفاً گزینه صحیح را انتخاب کنید:",
+        text=f"❓ سوال شماره {question_num} {progress}{answer_status}\n\nلطفاً گزینه صحیح را انتخاب کنید:",
         reply_markup=reply_markup
     )
 
@@ -260,7 +297,12 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     data = query.data
     user_id = query.from_user.id
-    exam_setup = context.user_data.get('exam_setup', {})
+    
+    if 'exam_setup' not in context.user_data:
+        await query.edit_message_text("⚠️ لطفا ابتدا با /new_exam یک آزمون جدید شروع کنید.")
+        return
+        
+    exam_setup = context.user_data['exam_setup']
     
     if data.startswith("ans_"):
         # پردازش پاسخ کاربر
@@ -287,10 +329,6 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data['exam_setup'] = exam_setup
             await show_question(update, context, next_question)
             await query.delete_message()
-        else:
-            await query.edit_message_text(
-                text="⚠️ این آخرین سوال آزمون است. برای اتمام آزمون دکمه 'اتمام آزمون' را بزنید."
-            )
     
     elif data.startswith("prev_"):
         # رفتن به سوال قبلی
@@ -310,9 +348,13 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['exam_setup'] = exam_setup
         
         total_questions = exam_setup.get('total_questions')
+        answered_count = len(exam_setup.get('answers', {}))
+        
         await query.edit_message_text(
-            text="📝 آزمون به پایان رسید. لطفاً پاسخ‌های صحیح را به صورت یک رشته اعداد و بدون فاصله ارسال کنید.\n\n" +
-                 f"مثال: برای {total_questions} سوال: {'1' * total_questions}"
+            text=f"📝 آزمون به پایان رسید.\n"
+                 f"📊 شما به {answered_count} از {total_questions} سوال پاسخ داده‌اید.\n\n"
+                 f"لطفاً پاسخ‌های صحیح را به صورت یک رشته {total_questions} رقمی و بدون فاصله ارسال کنید.\n\n"
+                 f"📋 مثال: برای {total_questions} سوال: {'1' * total_questions}"
         )
 
 # مشاهده نتایج قبلی
@@ -321,6 +363,10 @@ async def show_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     try:
         conn = get_db_connection()
+        if conn is None:
+            await update.message.reply_text("⚠️ در حال حاضر امکان دسترسی به تاریخچه نتایج وجود ندارد.")
+            return
+            
         cur = conn.cursor()
         cur.execute(
             "SELECT created_at, score, start_question, end_question FROM exams WHERE user_id = %s ORDER BY created_at DESC LIMIT 5",
@@ -333,7 +379,7 @@ async def show_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if results:
             result_text = "📋 آخرین نتایج آزمون‌های شما:\n\n"
             for i, (date, score, start_q, end_q) in enumerate(results, 1):
-                result_text += f"{i}. {start_q}-{end_q} - تاریخ: {date.strftime('%Y-%m-%d %H:%M')} - نمره: {score:.2f}%\n"
+                result_text += f"{i}. سوالات {start_q}-{end_q} - تاریخ: {date.strftime('%Y-%m-%d %H:%M')} - نمره: {score:.2f}%\n"
         else:
             result_text = "📭 هیچ نتیجه‌ای برای نمایش وجود ندارد."
     except Exception as e:
@@ -342,10 +388,32 @@ async def show_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(result_text)
 
+# راهنمای استفاده
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    help_text = """
+    📖 راهنمای استفاده از ربات آزمون تستی:
+    
+    1. /start - شروع کار با ربات
+    2. /new_exam - ایجاد یک آزمون جدید
+    3. /results - مشاهده نتایج قبلی
+    4. /help - نمایش این راهنما
+    
+    🎯 نحوه کار:
+    - با /new_exam شروع کنید
+    - محدوده سوالات را مشخص کنید
+    - با دکمه‌ها به سوالات پاسخ دهید
+    - در پایان، پاسخ‌های صحیح را وارد کنید
+    - نتایج را مشاهده کنید
+    
+    ⚠️ توجه: هر پاسخ غلط 0.25 نمره منفی دارد.
+    """
+    await update.message.reply_text(help_text)
+
 # تابع اصلی
 def main():
     # ایجاد جدول در دیتابیس
-    init_db()
+    if not init_db():
+        logger.warning("Database initialization failed. The bot will work without database support.")
     
     # ایجاد اپلیکیشن
     application = Application.builder().token(TOKEN).build()
@@ -354,6 +422,7 @@ def main():
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("new_exam", new_exam))
     application.add_handler(CommandHandler("results", show_results))
+    application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CallbackQueryHandler(handle_answer))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
