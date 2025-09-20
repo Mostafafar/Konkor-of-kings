@@ -117,11 +117,17 @@ async def show_all_questions(update: Update, context: ContextTypes.DEFAULT_TYPE)
         remaining_time = max(0, exam_duration * 60 - elapsed_time)
         minutes = int(remaining_time // 60)
         seconds = int(remaining_time % 60)
-        time_display = f"⏰ زمان باقیمانده: {minutes:02d}:{seconds:02d}\n\n"
+        
+        # ایجاد اعلان تایمر در بالای صفحه
+        timer_banner = f"⏰ زمان باقیمانده: {minutes:02d}:{seconds:02d}\n"
+        # اضافه کردن نوار پیشرفت
+        progress_percent = (elapsed_time / (exam_duration * 60)) * 100
+        progress_bar = create_progress_bar(progress_percent)
+        timer_banner += f"{progress_bar}\n\n"
     else:
-        time_display = ""
+        timer_banner = "⏰ زمان: نامحدود\n\n"
     
-    message_text = f"{time_display}📝 لطفاً به سوالات پاسخ دهید:\n\n"
+    message_text = f"{timer_banner}📝 لطفاً به سوالات پاسخ دهید:\n\n"
     
     # ایجاد دکمه‌های اینلاین برای تمام سوالات
     keyboard = []
@@ -173,15 +179,25 @@ async def show_all_questions(update: Update, context: ContextTypes.DEFAULT_TYPE)
     exam_setup['exam_message_id'] = message.message_id
     context.user_data['exam_setup'] = exam_setup
 
+# ایجاد نوار پیشرفت
+def create_progress_bar(percentage):
+    filled = int(percentage / 10)
+    empty = 10 - filled
+    return f"[{'█' * filled}{'░' * empty}] {percentage:.1f}%"
+
 # تایمر برای به روزرسانی زمان
 async def update_timer(context: ContextTypes.DEFAULT_TYPE):
     job = context.job
     user_id = job.chat_id
     
-    if 'exam_setup' not in context.user_data:
+    # دریافت داده‌های کاربر از bot_data
+    if 'user_exams' not in context.bot_data:
         return
     
-    exam_setup = context.user_data['exam_setup']
+    if user_id not in context.bot_data['user_exams']:
+        return
+    
+    exam_setup = context.bot_data['user_exams'][user_id]
     
     if exam_setup.get('step') != 4:  # اگر در مرحله آزمون نیست
         return
@@ -203,16 +219,12 @@ async def update_timer(context: ContextTypes.DEFAULT_TYPE):
     
     # به روزرسانی نمایش زمان
     try:
-        await show_all_questions_for_timer(context, user_id)
+        await show_all_questions_for_timer(context, user_id, exam_setup)
     except Exception as e:
         logger.error(f"Error updating timer: {e}")
 
 # نمایش سوالات برای تایمر
-async def show_all_questions_for_timer(context: ContextTypes.DEFAULT_TYPE, user_id: int):
-    if 'exam_setup' not in context.user_data:
-        return
-    
-    exam_setup = context.user_data['exam_setup']
+async def show_all_questions_for_timer(context: ContextTypes.DEFAULT_TYPE, user_id: int, exam_setup: dict):
     start_question = exam_setup.get('start_question')
     end_question = exam_setup.get('end_question')
     user_answers = exam_setup.get('answers', {})
@@ -225,17 +237,14 @@ async def show_all_questions_for_timer(context: ContextTypes.DEFAULT_TYPE, user_
     minutes = int(remaining_time // 60)
     seconds = int(remaining_time % 60)
     
-    # ایجاد نماد ساعت شنی بر اساس زمان باقیمانده
-    if remaining_time < 60:  # کمتر از 1 دقیقه
-        sandglass = "⏳"
-    elif remaining_time < 300:  # کمتر از 5 دقیقه
-        sandglass = "⌛"
-    else:
-        sandglass = "⏰"
+    # ایجاد اعلان تایمر در بالای صفحه
+    timer_banner = f"⏰ زمان باقیمانده: {minutes:02d}:{seconds:02d}\n"
+    # اضافه کردن نوار پیشرفت
+    progress_percent = (elapsed_time / (exam_duration * 60)) * 100
+    progress_bar = create_progress_bar(progress_percent)
+    timer_banner += f"{progress_bar}\n\n"
     
-    time_display = f"{sandglass} زمان باقیمانده: {minutes:02d}:{seconds:02d}\n\n"
-    
-    message_text = f"{time_display}📝 لطفاً به سوالات پاسخ دهید:\n\n"
+    message_text = f"{timer_banner}📝 لطفاً به سوالات پاسخ دهید:\n\n"
     
     # ایجاد دکمه‌های اینلاین برای تمام سوالات
     keyboard = []
@@ -275,14 +284,14 @@ async def show_all_questions_for_timer(context: ContextTypes.DEFAULT_TYPE, user_
 
 # اتمام خودکار آزمون وقتی زمان تمام شد
 async def finish_exam_auto(context: ContextTypes.DEFAULT_TYPE, user_id: int):
-    if 'exam_setup' not in context.user_data:
+    if 'user_exams' not in context.bot_data or user_id not in context.bot_data['user_exams']:
         return
     
-    exam_setup = context.user_data['exam_setup']
+    exam_setup = context.bot_data['user_exams'][user_id]
     
     # تغییر وضعیت به انتظار برای پاسخ‌های صحیح
     exam_setup['step'] = 'waiting_for_correct_answers'
-    context.user_data['exam_setup'] = exam_setup
+    context.bot_data['user_exams'][user_id] = exam_setup
     
     # حذف job تایمر
     job_name = f"timer_{user_id}"
@@ -370,6 +379,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             exam_setup['answers'] = {}
             exam_setup['start_time'] = datetime.now()
             context.user_data['exam_setup'] = exam_setup
+            
+            # ذخیره در bot_data برای دسترسی در jobها
+            if 'user_exams' not in context.bot_data:
+                context.bot_data['user_exams'] = {}
+            context.bot_data['user_exams'][user_id] = exam_setup
             
             # شروع تایمر اگر زمان مشخص شده
             if exam_duration > 0:
@@ -494,6 +508,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # پاک کردن وضعیت آزمون و تایمر
         context.user_data.pop('exam_setup', None)
+        if 'user_exams' in context.bot_data and user_id in context.bot_data['user_exams']:
+            context.bot_data['user_exams'].pop(user_id, None)
+        
         job_name = f"timer_{user_id}"
         current_jobs = context.job_queue.get_jobs_by_name(job_name)
         for job in current_jobs:
@@ -524,12 +541,20 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         exam_setup['answers'][str(question_num)] = answer
         context.user_data['exam_setup'] = exam_setup
         
+        # به روزرسانی در bot_data نیز
+        if 'user_exams' in context.bot_data and user_id in context.bot_data['user_exams']:
+            context.bot_data['user_exams'][user_id] = exam_setup
+        
         await show_all_questions(update, context)
         await query.delete_message()
     
     elif data == "finish_exam":
         exam_setup['step'] = 'waiting_for_correct_answers'
         context.user_data['exam_setup'] = exam_setup
+        
+        # به روزرسانی در bot_data نیز
+        if 'user_exams' in context.bot_data and user_id in context.bot_data['user_exams']:
+            context.bot_data['user_exams'][user_id] = exam_setup
         
         # حذف تایمر
         job_name = f"timer_{user_id}"
@@ -598,8 +623,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     ⏰ ویژگی‌های تایمر:
     - نمایش زمان باقیمانده به صورت زنده
+    - اعلان تایمر در بالای صفحه
+    - نوار پیشرفت گرافیکی
     - اتمام خودکار آزمون هنگام اتمام زمان
-    - نماد ساعت شنی متغیر بر اساس زمان باقیمانده
     
     ⚠️ توجه: هر ۳ پاسخ غلط، ۱ پاسخ صحیح را حذف می‌کند.
     """
@@ -619,7 +645,7 @@ def main():
     application.add_handler(CallbackQueryHandler(handle_answer))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
-    logger.info("Bot started with timer feature...")
+    logger.info("Bot started with advanced timer feature...")
     application.run_polling()
 
 if __name__ == "__main__":
