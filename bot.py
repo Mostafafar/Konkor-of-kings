@@ -468,16 +468,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 wrong_questions.append(i)
         
+        # محاسبه نتایج
         correct_count = len(correct_questions)
         wrong_count = len(wrong_questions)
         unanswered_count = len(unanswered_questions)
-        
+
+        # درصد بدون نمره منفی
         percentage_without_penalty = (correct_count / total_questions) * 100 if total_questions > 0 else 0
-        
-        penalty_deduction = wrong_count // 3
-        final_score = max(0, correct_count - penalty_deduction)
+
+        # محاسبه نمره منفی
+        raw_score = correct_count
+        penalty = wrong_count / 3.0  # کسر ⅓ نمره به ازای هر پاسخ اشتباه
+        final_score = max(0, raw_score - penalty)
         final_percentage = (final_score / total_questions) * 100 if total_questions > 0 else 0
-        
+
         # محاسبه زمان صرف شده
         elapsed_time = calculate_elapsed_time(exam_setup.get('start_time'))
         
@@ -487,6 +491,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             conn = get_db_connection()
             if conn:
                 cur = conn.cursor()
+                # بررسی وجود ستون elapsed_time
+                try:
+                    cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name='exams' AND column_name='elapsed_time'")
+                    if not cur.fetchone():
+                        cur.execute("ALTER TABLE exams ADD COLUMN elapsed_time REAL")
+                        conn.commit()
+                except:
+                    pass
+                
                 cur.execute(
                     """
                     INSERT INTO exams 
@@ -499,7 +512,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         exam_setup.get('end_question'),
                         total_questions,
                         exam_setup.get('exam_duration'),
-                        elapsed_time,  # زمان صرف شده
+                        elapsed_time,
                         str(user_answers),
                         cleaned_text,
                         final_percentage,
@@ -513,7 +526,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 saved_to_db = True
         except Exception as e:
             logger.error(f"Error saving to database: {e}")
-        
+
         # ارسال نتایج
         result_text = f"""
 📊 نتایج آزمون شما:
@@ -531,12 +544,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 🔢 سوالات غلط: {', '.join(map(str, wrong_questions)) if wrong_questions else 'ندارد'}
 🔢 سوالات بی‌پاسخ: {', '.join(map(str, unanswered_questions)) if unanswered_questions else 'ندارد'}
 
-💡 نکته: هر ۳ پاسخ اشتباه، ۱ پاسخ صحیح را خنثی می‌کند.
+💡 نکته: هر ۳ پاسخ اشتباه، معادل ۱ پاسخ صحیح نمره منفی دارد.
 """
-        
+
         if not saved_to_db:
             result_text += "\n\n⚠️ نتایج در پایگاه داده ذخیره نشد (مشکل اتصال)."
-        
+
         await update.message.reply_text(result_text)
         
         # پاک کردن وضعیت آزمون و تایمر
