@@ -123,18 +123,13 @@ async def show_all_questions(update: Update, context: ContextTypes.DEFAULT_TYPE)
         question_buttons = []
         for option in [1, 2, 3, 4]:
             # اگر این گزینه قبلاً انتخاب شده، علامت ✅ نشان داده شود
-            button_text = f"{option} ✅" if current_answer == option else str(option)
-            question_buttons.append(InlineKeyboardButton(f"{question_num}-{button_text}", callback_data=f"ans_{question_num}_{option}"))
+            button_text = f"{question_num}-{option} ✅" if current_answer == option else f"{question_num}-{option}"
+            question_buttons.append(InlineKeyboardButton(button_text, callback_data=f"ans_{question_num}_{option}"))
         
         keyboard.append(question_buttons)
     
-    # اضافه کردن دکمه اتمام آزمون و دکمه‌های دستوری
+    # اضافه کردن دکمه اتمام آزمون
     keyboard.append([InlineKeyboardButton("🎯 اتمام آزمون و ارسال پاسخ‌ها", callback_data="finish_exam")])
-    keyboard.append([
-        InlineKeyboardButton("🆘 راهنما", callback_data="cmd_help"),
-        InlineKeyboardButton("📊 نتایج", callback_data="cmd_results"),
-        InlineKeyboardButton("📝 آزمون جدید", callback_data="cmd_new_exam")
-    ])
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     
@@ -350,19 +345,6 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
                  f"لطفاً پاسخ‌های صحیح را به صورت یک رشته {total_questions} رقمی و بدون فاصله ارسال کنید.\n\n"
                  f"📋 مثال: برای {total_questions} سوال: {'1' * total_questions}"
         )
-    
-    # مدیریت دکمه‌های دستوری
-    elif data == "cmd_help":
-        await help_command(update, context)
-        await query.delete_message()
-    
-    elif data == "cmd_results":
-        await show_results(update, context)
-        await query.delete_message()
-    
-    elif data == "cmd_new_exam":
-        await new_exam(update, context)
-        await query.delete_message()
 
 # مشاهده نتایج قبلی
 async def show_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
