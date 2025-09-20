@@ -99,7 +99,7 @@ async def new_exam(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🔢 لطفاً شماره اولین سوال را وارد کنید:"
     )
 
-# نمایش تمام سوالات به صورت همزمان
+# نمایش تمام سوالات به صورت همزمان با فرمت جدید
 async def show_all_questions(update: Update, context: ContextTypes.DEFAULT_TYPE):
     exam_setup = context.user_data['exam_setup']
     start_question = exam_setup.get('start_question')
@@ -121,9 +121,12 @@ async def show_all_questions(update: Update, context: ContextTypes.DEFAULT_TYPE)
         
         # ایجاد دکمه‌های گزینه‌ها برای هر سوال با شماره سوال
         question_buttons = []
+        # دکمه شماره سوال (غیرفعال)
+        question_buttons.append(InlineKeyboardButton(f"{question_num}", callback_data="ignore"))
+        
         for option in [1, 2, 3, 4]:
             # اگر این گزینه قبلاً انتخاب شده، علامت ✅ نشان داده شود
-            button_text = f"{question_num}-{option} ✅" if current_answer == option else f"{question_num}-{option}"
+            button_text = f"{option} ✅" if current_answer == option else str(option)
             question_buttons.append(InlineKeyboardButton(button_text, callback_data=f"ans_{question_num}_{option}"))
         
         keyboard.append(question_buttons)
@@ -310,6 +313,10 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     data = query.data
     user_id = query.from_user.id
+    
+    if data == "ignore":
+        # اگر کاربر روی شماره سوال کلیک کرد، هیچ کاری نکن
+        return
     
     if 'exam_setup' not in context.user_data:
         await query.edit_message_text("⚠️ لطفا ابتدا با /new_exam یک آزمون جدید شروع کنید.")
