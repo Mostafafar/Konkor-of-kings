@@ -6,6 +6,8 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Cont
 import psycopg2
 from psycopg2 import sql
 from datetime import datetime, timedelta
+import jdatetime  # برای تاریخ شمسی
+import pytz  # برای منطقه زمانی
 
 # تنظیمات لاگ
 logging.basicConfig(
@@ -25,6 +27,9 @@ DB_CONFIG = {
     'host': 'localhost',
     'port': '5432'
 }
+
+# منطقه زمانی تهران
+TEHRAN_TZ = pytz.timezone('Asia/Tehran')
 
 def get_db_connection():
     try:
@@ -49,6 +54,8 @@ def init_db():
             CREATE TABLE IF NOT EXISTS exams (
                 id SERIAL PRIMARY KEY,
                 user_id BIGINT,
+                course_name TEXT,
+                topic_name TEXT,
                 start_question INTEGER,
                 end_question INTEGER,
                 total_questions INTEGER,
@@ -59,12 +66,18 @@ def init_db():
                 score REAL DEFAULT 0,
                 wrong_questions TEXT,
                 unanswered_questions TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                jalali_date TEXT,
+                tehran_time TEXT
             )
         ''')
         
-        # بررسی و اضافه کردن ستون‌های缺失 اگر وجود ندارند
+        # بررسی و اضافه کردن ستون‌های جدید اگر وجود ندارند
         columns_to_add = [
+            ('course_name', 'TEXT'),
+            ('topic_name', 'TEXT'),
+            ('jalali_date', 'TEXT'),
+            ('tehran_time', 'TEXT'),
             ('exam_duration', 'INTEGER DEFAULT 0'),
             ('elapsed_time', 'REAL DEFAULT 0')
         ]
@@ -91,6 +104,23 @@ def init_db():
         logger.error(f"Error initializing database: {e}")
         return False
 
+# دریافت تاریخ و زمان تهران
+def get_tehran_datetime():
+    """دریافت تاریخ و زمان فعلی تهران"""
+    tehran_now = datetime.now(TEHRAN_TZ)
+    return tehran_now
+
+def get_jalali_date():
+    """دریافت تاریخ شمسی"""
+    tehran_now = get_tehran_datetime()
+    jalali_date = jdatetime.datetime.fromgregorian(datetime=tehran_now)
+    return jalali_date.strftime('%Y/%m/%d')
+
+def get_tehran_time():
+    """دریافت زمان تهران"""
+    tehran_now = get_tehran_datetime()
+    return tehran_now.strftime('%H:%M:%S')
+
 # مدیریت دستور start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -103,10 +133,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     🎯 نحوه استفاده:
     1. با /new_exam شروع کنید
-    2. محدوده سوالات و زمان آزمون را مشخص کنید
-    3. با دکمه‌ها به سوالات پاسخ دهید
-    4. در پایان، پاسخ‌های صحیح را وارد کنید
-    5. نتایج را مشاهده کنید
+    2. نام درس و مبحث را وارد کنید
+    3. محدوده سوالات و زمان آزمون را مشخص کنید
+    4. با دکمه‌ها به سوالات پاسخ دهید
+    5. در پایان، پاسخ‌های صحیح را وارد کنید
+    6. نتایج را مشاهده کنید
     
     ⏰ دارای تایمر پیشرفته برای مدیریت زمان آزمون
     """
@@ -119,10 +150,10 @@ async def new_exam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop('exam_setup', None)
     
     # ایجاد وضعیت جدید
-    context.user_data['exam_setup'] = {'step': 1}
+    context.user_data['exam_setup'] = {'step': 'course_name'}
     
     await update.message.reply_text(
-        "🔢 لطفاً شماره اولین سوال را وارد کنید:"
+        "📚 لطفاً نام درس را وارد کنید:"
     )
 
 # نمایش تمام سوالات به صورت همزمان با فرمت جدید
@@ -132,7 +163,12 @@ async def show_all_questions(update: Update, context: ContextTypes.DEFAULT_TYPE)
     end_question = exam_setup.get('end_question')
     user_answers = exam_setup.get('answers', {})
     
-    message_text = "📝 لطفاً به سوالات پاسخ دهید:\n\n"
+    course_name = exam_setup.get('course_name', 'نامعلوم')
+    topic_name = exam_setup.get('topic_name', 'نامعلوم')
+    
+    message_text = f"📚 درس: {course_name}\n"
+    message_text += f"📖 مبحث: {topic_name}\n\n"
+    message_text += "📝 لطفاً به سوالات پاسخ دهید:\n\n"
     
     # ایجاد دکمه‌های اینلاین برای تمام سوالات
     keyboard = []
@@ -143,7 +179,7 @@ async def show_all_questions(update: Update, context: ContextTypes.DEFAULT_TYPE)
         status = f" ✅ (گزینه {current_answer})" if current_answer else ""
         
         # اضافه کردن سوال به متن پیام
-     #   message_text += f"{question_num}){status}\n"
+        # message_text += f"{question_num}){status}\n"
         
         # ایجاد دکمه‌های گزینه‌ها برای هر سوال با شماره سوال
         question_buttons = []
@@ -207,8 +243,11 @@ async def show_pinned_timer(context: ContextTypes.DEFAULT_TYPE, user_id: int, ex
     progress_percent = (elapsed_time / (exam_duration * 60)) * 100
     progress_bar = create_progress_bar(progress_percent)
     
+    course_name = exam_setup.get('course_name', 'نامعلوم')
+    topic_name = exam_setup.get('topic_name', 'نامعلوم')
+    
     # فقط نوار پیشرفت و زمان باقیمانده نمایش داده شود
-    timer_text = f"⏳ باقیمانده: {minutes:02d}:{seconds:02d}\n{progress_bar}"
+    timer_text = f"📚 {course_name} - {topic_name}\n⏳ باقیمانده: {minutes:02d}:{seconds:02d}\n{progress_bar}"
     
     # ارسال یا ویرایش پیام تایمر
     if 'timer_message_id' in exam_setup:
@@ -308,11 +347,15 @@ async def finish_exam_auto(context: ContextTypes.DEFAULT_TYPE, user_id: int):
     total_questions = exam_setup.get('total_questions')
     answered_count = len(exam_setup.get('answers', {}))
     
+    course_name = exam_setup.get('course_name', 'نامعلوم')
+    topic_name = exam_setup.get('topic_name', 'نامعلوم')
+    
     # ارسال پیام اتمام زمان
     try:
         await context.bot.send_message(
             chat_id=user_id,
-            text=f"⏰ زمان آزمون به پایان رسید!\n"
+            text=f"📚 {course_name} - {topic_name}\n"
+                 f"⏰ زمان آزمون به پایان رسید!\n"
                  f"📊 شما به {answered_count} از {total_questions} سوال پاسخ داده‌اید.\n\n"
                  f"لطفاً پاسخ‌های صحیح را به صورت یک رشته {total_questions} رقمی و بدون فاصله ارسال کنید.\n\n"
                  f"📋 مثال: برای {total_questions} سوال: {'1' * total_questions}"
@@ -350,7 +393,31 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     exam_setup = context.user_data['exam_setup']
     
-    if exam_setup.get('step') == 1:
+    if exam_setup.get('step') == 'course_name':
+        if not text:
+            await update.message.reply_text("❌ نام درس نمی‌تواند خالی باشد. لطفاً مجدداً وارد کنید:")
+            return
+            
+        exam_setup['course_name'] = text
+        exam_setup['step'] = 'topic_name'
+        context.user_data['exam_setup'] = exam_setup
+        await update.message.reply_text(
+            "📖 لطفاً نام مبحث را وارد کنید:"
+        )
+    
+    elif exam_setup.get('step') == 'topic_name':
+        if not text:
+            await update.message.reply_text("❌ نام مبحث نمی‌تواند خالی باشد. لطفاً مجدداً وارد کنید:")
+            return
+            
+        exam_setup['topic_name'] = text
+        exam_setup['step'] = 1
+        context.user_data['exam_setup'] = exam_setup
+        await update.message.reply_text(
+            "🔢 لطفاً شماره اولین سوال را وارد کنید:"
+        )
+    
+    elif exam_setup.get('step') == 1:
         try:
             start_question = int(text)
             if start_question <= 0:
@@ -485,29 +552,29 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # محاسبه زمان صرف شده
         elapsed_time = calculate_elapsed_time(exam_setup.get('start_time'))
         
+        # دریافت تاریخ و زمان تهران
+        jalali_date = get_jalali_date()
+        tehran_time = get_tehran_time()
+        
         # ذخیره نتایج در دیتابیس
         saved_to_db = False
         try:
             conn = get_db_connection()
             if conn:
                 cur = conn.cursor()
-                # بررسی وجود ستون elapsed_time
-                try:
-                    cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name='exams' AND column_name='elapsed_time'")
-                    if not cur.fetchone():
-                        cur.execute("ALTER TABLE exams ADD COLUMN elapsed_time REAL")
-                        conn.commit()
-                except:
-                    pass
                 
                 cur.execute(
                     """
                     INSERT INTO exams 
-                    (user_id, start_question, end_question, total_questions, exam_duration, elapsed_time, answers, correct_answers, score, wrong_questions, unanswered_questions)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    (user_id, course_name, topic_name, start_question, end_question, total_questions, 
+                     exam_duration, elapsed_time, answers, correct_answers, score, wrong_questions, 
+                     unanswered_questions, jalali_date, tehran_time)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         user_id,
+                        exam_setup.get('course_name'),
+                        exam_setup.get('topic_name'),
                         exam_setup.get('start_question'),
                         exam_setup.get('end_question'),
                         total_questions,
@@ -517,7 +584,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         cleaned_text,
                         final_percentage,
                         str(wrong_questions),
-                        str(unanswered_questions)
+                        str(unanswered_questions),
+                        jalali_date,
+                        tehran_time
                     )
                 )
                 conn.commit()
@@ -527,9 +596,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.error(f"Error saving to database: {e}")
 
+        course_name = exam_setup.get('course_name', 'نامعلوم')
+        topic_name = exam_setup.get('topic_name', 'نامعلوم')
+        
         # ارسال نتایج
         result_text = f"""
 📊 نتایج آزمون شما:
+
+📚 درس: {course_name}
+📖 مبحث: {topic_name}
+📅 تاریخ: {jalali_date}
+⏰ زمان: {tehran_time}
 
 ✅ تعداد پاسخ صحیح: {correct_count}
 ❌ تعداد پاسخ اشتباه: {wrong_count}
@@ -640,8 +717,12 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         total_questions = exam_setup.get('total_questions')
         answered_count = len(exam_setup.get('answers', {}))
         
+        course_name = exam_setup.get('course_name', 'نامعلوم')
+        topic_name = exam_setup.get('topic_name', 'نامعلوم')
+        
         await query.edit_message_text(
-            text=f"📝 آزمون به پایان رسید.\n"
+            text=f"📚 {course_name} - {topic_name}\n"
+                 f"📝 آزمون به پایان رسید.\n"
                  f"⏰ زمان صرف شده: {elapsed_time:.2f} دقیقه\n"
                  f"📊 شما به {answered_count} از {total_questions} سوال پاسخ داده‌اید.\n\n"
                  f"لطفاً پاسخ‌های صحیح را به صورت یک رشته {total_questions} رقمی و بدون فاصله ارسال کنید.\n\n"
@@ -660,24 +741,10 @@ async def show_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
         cur = conn.cursor()
         
-        # بررسی وجود ستون elapsed_time
-        try:
-            cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name='exams' AND column_name='elapsed_time'")
-            if cur.fetchone():
-                cur.execute(
-                    "SELECT created_at, score, start_question, end_question, exam_duration, elapsed_time FROM exams WHERE user_id = %s ORDER BY created_at DESC LIMIT 5",
-                    (user_id,)
-                )
-            else:
-                cur.execute(
-                    "SELECT created_at, score, start_question, end_question, exam_duration FROM exams WHERE user_id = %s ORDER BY created_at DESC LIMIT 5",
-                    (user_id,)
-                )
-        except:
-            cur.execute(
-                "SELECT created_at, score, start_question, end_question, exam_duration FROM exams WHERE user_id = %s ORDER BY created_at DESC LIMIT 5",
-                (user_id,)
-            )
+        cur.execute(
+            "SELECT course_name, topic_name, created_at, score, start_question, end_question, exam_duration, elapsed_time, jalali_date, tehran_time FROM exams WHERE user_id = %s ORDER BY created_at DESC LIMIT 5",
+            (user_id,)
+        )
         
         results = cur.fetchall()
         cur.close()
@@ -687,28 +754,28 @@ async def show_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
             result_text = "📋 آخرین نتایج آزمون‌های شما:\n\n"
             for i, result in enumerate(results, 1):
                 try:
-                    if len(result) == 6:  # اگر elapsed_time وجود دارد
-                        date, score, start_q, end_q, duration, elapsed = result
-                        # بررسی مقادیر None
-                        duration = duration or 0
-                        elapsed = elapsed or 0
-                        time_text = f"{elapsed:.1f} دقیقه از {duration} دقیقه" if duration and duration > 0 else f"{elapsed:.1f} دقیقه"
-                    else:
-                        date, score, start_q, end_q, duration = result
-                        # بررسی مقادیر None
-                        duration = duration or 0
-                        time_text = f"{duration} دقیقه" if duration and duration > 0 else "بدون محدودیت"
+                    course_name, topic_name, date, score, start_q, end_q, duration, elapsed, jalali_date, tehran_time = result
                     
-                    # بررسی مقادیر None برای سایر فیلدها
+                    # بررسی مقادیر None
+                    duration = duration or 0
+                    elapsed = elapsed or 0
                     score = score or 0
                     start_q = start_q or 0
                     end_q = end_q or 0
+                    course_name = course_name or 'نامعلوم'
+                    topic_name = topic_name or 'نامعلوم'
+                    jalali_date = jalali_date or 'نامعلوم'
+                    tehran_time = tehran_time or 'نامعلوم'
                     
-                    result_text += f"{i}. سوالات {start_q}-{end_q} - زمان: {time_text} - نمره: {score:.2f}% - تاریخ: {date.strftime('%Y-%m-%d %H:%M')}\n"
+                    time_text = f"{elapsed:.1f} دقیقه از {duration} دقیقه" if duration and duration > 0 else f"{elapsed:.1f} دقیقه"
+                    
+                    result_text += f"{i}. {course_name} - {topic_name}\n"
+                    result_text += f"   سوالات {start_q}-{end_q} - زمان: {time_text}\n"
+                    result_text += f"   نمره: {score:.2f}% - تاریخ: {jalali_date} {tehran_time}\n\n"
                 
                 except Exception as e:
                     logger.error(f"Error processing result {i}: {e}")
-                    result_text += f"{i}. خطا در پردازش نتیجه\n"
+                    result_text += f"{i}. خطا در پردازش نتیجه\n\n"
         else:
             result_text = "📭 هیچ نتیجه‌ای برای نمایش وجود ندارد."
             
@@ -730,6 +797,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     🎯 نحوه کار:
     - با /new_exam شروع کنید
+    - نام درس و مبحث را وارد کنید
     - محدوده سوالات و زمان آزمون را مشخص کنید
     - با دکمه‌ها به سوالات پاسخ دهید
     - در پایان، پاسخ‌های صحیح را وارد کنید
@@ -759,7 +827,7 @@ def main():
     application.add_handler(CallbackQueryHandler(handle_answer))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
-    logger.info("Bot started with pinned timer feature...")
+    logger.info("Bot started with course/topic feature and jalali date...")
     application.run_polling()
 
 if __name__ == "__main__":
