@@ -102,32 +102,14 @@ async def new_exam(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🔢 لطفاً شماره اولین سوال را وارد کنید:"
     )
 
-# نمایش تمام سوالات به صورت همزمان با فرمت جدید و تایمر
+# نمایش تمام سوالات به صورت همزمان با فرمت جدید
 async def show_all_questions(update: Update, context: ContextTypes.DEFAULT_TYPE):
     exam_setup = context.user_data['exam_setup']
     start_question = exam_setup.get('start_question')
     end_question = exam_setup.get('end_question')
     user_answers = exam_setup.get('answers', {})
-    exam_duration = exam_setup.get('exam_duration', 0)
-    start_time = exam_setup.get('start_time', datetime.now())
     
-    # محاسبه زمان باقیمانده
-    if exam_duration > 0:
-        elapsed_time = (datetime.now() - start_time).total_seconds()
-        remaining_time = max(0, exam_duration * 60 - elapsed_time)
-        minutes = int(remaining_time // 60)
-        seconds = int(remaining_time % 60)
-        
-        # ایجاد اعلان تایمر در بالای صفحه
-        timer_banner = f"⏰ زمان باقیمانده: {minutes:02d}:{seconds:02d}\n"
-        # اضافه کردن نوار پیشرفت
-        progress_percent = (elapsed_time / (exam_duration * 60)) * 100
-        progress_bar = create_progress_bar(progress_percent)
-        timer_banner += f"{progress_bar}\n\n"
-    else:
-        timer_banner = "⏰ زمان: نامحدود\n\n"
-    
-    message_text = f"{timer_banner}📝 لطفاً به سوالات پاسخ دهید:\n\n"
+    message_text = "📝 لطفاً به سوالات پاسخ دهید:\n\n"
     
     # ایجاد دکمه‌های اینلاین برای تمام سوالات
     keyboard = []
@@ -181,9 +163,78 @@ async def show_all_questions(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 # ایجاد نوار پیشرفت
 def create_progress_bar(percentage):
-    filled = int(percentage / 10)
+    filled = min(10, int(percentage / 10))
     empty = 10 - filled
     return f"[{'█' * filled}{'░' * empty}] {percentage:.1f}%"
+
+# تایمر با پیام پین شده
+async def show_pinned_timer(context: ContextTypes.DEFAULT_TYPE, user_id: int, exam_setup: dict):
+    exam_duration = exam_setup.get('exam_duration', 0)
+    start_time = exam_setup.get('start_time')
+    
+    if not exam_duration or not start_time:
+        return
+    
+    elapsed_time = (datetime.now() - start_time).total_seconds()
+    remaining_time = max(0, exam_duration * 60 - elapsed_time)
+    minutes = int(remaining_time // 60)
+    seconds = int(remaining_time % 60)
+    
+    # ایجاد اعلان تایمر پیشرفته
+    progress_percent = (elapsed_time / (exam_duration * 60)) * 100
+    progress_bar = create_progress_bar(progress_percent)
+    
+    timer_text = f"""
+⏰ **زمان آزمون**
+━━━━━━━━━━━━━━━━
+⏳ باقیمانده: `{minutes:02d}:{seconds:02d}`
+{progress_bar}
+📊 پیشرفت: `{progress_percent:.1f}%`
+━━━━━━━━━━━━━━━━
+"""
+    
+    # ارسال یا ویرایش پیام تایمر
+    if 'timer_message_id' in exam_setup:
+        try:
+            await context.bot.edit_message_text(
+                chat_id=user_id,
+                message_id=exam_setup['timer_message_id'],
+                text=timer_text,
+                parse_mode='Markdown'
+            )
+            # پین کردن پیام
+            try:
+                await context.bot.pin_chat_message(
+                    chat_id=user_id,
+                    message_id=exam_setup['timer_message_id'],
+                    disable_notification=True
+                )
+            except:
+                pass
+        except Exception as e:
+            logger.error(f"Error editing timer message: {e}")
+    else:
+        try:
+            message = await context.bot.send_message(
+                chat_id=user_id,
+                text=timer_text,
+                parse_mode='Markdown'
+            )
+            exam_setup['timer_message_id'] = message.message_id
+            # پین کردن پیام
+            try:
+                await context.bot.pin_chat_message(
+                    chat_id=user_id,
+                    message_id=message.message_id,
+                    disable_notification=True
+                )
+            except:
+                pass
+            # ذخیره در bot_data
+            if 'user_exams' in context.bot_data and user_id in context.bot_data['user_exams']:
+                context.bot_data['user_exams'][user_id] = exam_setup
+        except Exception as e:
+            logger.error(f"Error sending timer message: {e}")
 
 # تایمر برای به روزرسانی زمان
 async def update_timer(context: ContextTypes.DEFAULT_TYPE):
@@ -217,70 +268,8 @@ async def update_timer(context: ContextTypes.DEFAULT_TYPE):
         await finish_exam_auto(context, user_id)
         return
     
-    # به روزرسانی نمایش زمان
-    try:
-        await show_all_questions_for_timer(context, user_id, exam_setup)
-    except Exception as e:
-        logger.error(f"Error updating timer: {e}")
-
-# نمایش سوالات برای تایمر
-async def show_all_questions_for_timer(context: ContextTypes.DEFAULT_TYPE, user_id: int, exam_setup: dict):
-    start_question = exam_setup.get('start_question')
-    end_question = exam_setup.get('end_question')
-    user_answers = exam_setup.get('answers', {})
-    exam_duration = exam_setup.get('exam_duration', 0)
-    start_time = exam_setup.get('start_time', datetime.now())
-    
-    # محاسبه زمان باقیمانده
-    elapsed_time = (datetime.now() - start_time).total_seconds()
-    remaining_time = max(0, exam_duration * 60 - elapsed_time)
-    minutes = int(remaining_time // 60)
-    seconds = int(remaining_time % 60)
-    
-    # ایجاد اعلان تایمر در بالای صفحه
-    timer_banner = f"⏰ زمان باقیمانده: {minutes:02d}:{seconds:02d}\n"
-    # اضافه کردن نوار پیشرفت
-    progress_percent = (elapsed_time / (exam_duration * 60)) * 100
-    progress_bar = create_progress_bar(progress_percent)
-    timer_banner += f"{progress_bar}\n\n"
-    
-    message_text = f"{timer_banner}📝 لطفاً به سوالات پاسخ دهید:\n\n"
-    
-    # ایجاد دکمه‌های اینلاین برای تمام سوالات
-    keyboard = []
-    
-    for question_num in range(start_question, end_question + 1):
-        # وضعیت پاسخ فعلی
-        current_answer = user_answers.get(str(question_num))
-        status = f" ✅ (گزینه {current_answer})" if current_answer else ""
-        
-        # اضافه کردن سوال به متن پیام
-        message_text += f"{question_num}){status}\n"
-        
-        # ایجاد دکمه‌های گزینه‌ها برای هر سوال با شماره سوال
-        question_buttons = []
-        question_buttons.append(InlineKeyboardButton(f"{question_num}", callback_data="ignore"))
-        
-        for option in [1, 2, 3, 4]:
-            button_text = f"{option} ✅" if current_answer == option else str(option)
-            question_buttons.append(InlineKeyboardButton(button_text, callback_data=f"ans_{question_num}_{option}"))
-        
-        keyboard.append(question_buttons)
-    
-    keyboard.append([InlineKeyboardButton("🎯 اتمام آزمون و ارسال پاسخ‌ها", callback_data="finish_exam")])
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    # ویرایش پیام
-    if 'exam_message_id' in exam_setup:
-        try:
-            await context.bot.edit_message_text(
-                chat_id=user_id,
-                message_id=exam_setup['exam_message_id'],
-                text=message_text,
-                reply_markup=reply_markup
-            )
-        except Exception as e:
-            logger.error(f"Error updating message: {e}")
+    # نمایش تایمر پین شده
+    await show_pinned_timer(context, user_id, exam_setup)
 
 # اتمام خودکار آزمون وقتی زمان تمام شد
 async def finish_exam_auto(context: ContextTypes.DEFAULT_TYPE, user_id: int):
@@ -311,6 +300,17 @@ async def finish_exam_auto(context: ContextTypes.DEFAULT_TYPE, user_id: int):
                  f"لطفاً پاسخ‌های صحیح را به صورت یک رشته {total_questions} رقمی و بدون فاصله ارسال کنید.\n\n"
                  f"📋 مثال: برای {total_questions} سوال: {'1' * total_questions}"
         )
+        
+        # آنپین کردن پیام تایمر
+        if 'timer_message_id' in exam_setup:
+            try:
+                await context.bot.unpin_chat_message(
+                    chat_id=user_id,
+                    message_id=exam_setup['timer_message_id']
+                )
+            except:
+                pass
+            
     except Exception as e:
         logger.error(f"Error sending auto-finish message: {e}")
 
@@ -404,6 +404,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             # نمایش تمام سوالات به صورت همزمان
             await show_all_questions(update, context)
+            
+            # نمایش تایمر پین شده
+            await show_pinned_timer(context, user_id, exam_setup)
             
         except ValueError:
             await update.message.reply_text("❌ لطفاً یک عدد معتبر وارد کنید.")
@@ -509,6 +512,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # پاک کردن وضعیت آزمون و تایمر
         context.user_data.pop('exam_setup', None)
         if 'user_exams' in context.bot_data and user_id in context.bot_data['user_exams']:
+            # آنپین کردن پیام تایمر
+            exam_setup = context.bot_data['user_exams'][user_id]
+            if 'timer_message_id' in exam_setup:
+                try:
+                    await context.bot.unpin_chat_message(
+                        chat_id=user_id,
+                        message_id=exam_setup['timer_message_id']
+                    )
+                except:
+                    pass
             context.bot_data['user_exams'].pop(user_id, None)
         
         job_name = f"timer_{user_id}"
@@ -623,7 +636,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     ⏰ ویژگی‌های تایمر:
     - نمایش زمان باقیمانده به صورت زنده
-    - اعلان تایمر در بالای صفحه
+    - پیام تایمر پین شده در بالای چت
     - نوار پیشرفت گرافیکی
     - اتمام خودکار آزمون هنگام اتمام زمان
     
@@ -645,7 +658,7 @@ def main():
     application.add_handler(CallbackQueryHandler(handle_answer))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
-    logger.info("Bot started with advanced timer feature...")
+    logger.info("Bot started with pinned timer feature...")
     application.run_polling()
 
 if __name__ == "__main__":
