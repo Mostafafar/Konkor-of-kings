@@ -99,6 +99,7 @@ async def new_exam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 # پردازش مراحل ایجاد آزمون
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text.strip()
@@ -170,7 +171,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # محاسبه نتایج
         user_answers = exam_setup.get('answers', {})
-        score = 0
         correct_questions = []
         wrong_questions = []
         unanswered_questions = []
@@ -178,6 +178,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         start_q = exam_setup.get('start_question')
         end_q = exam_setup.get('end_question')
         
+        # تشخیص سوالات صحیح، غلط و بی‌پاسخ
         for i in range(start_q, end_q + 1):
             user_answer = user_answers.get(str(i))
             correct_answer = correct_answers[i - start_q]
@@ -185,14 +186,24 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if user_answer is None:
                 unanswered_questions.append(i)
             elif user_answer == correct_answer:
-                score += 1
                 correct_questions.append(i)
             else:
-                score -= 0.25  # نمره منفی
                 wrong_questions.append(i)
         
-        # محاسبه درصد
-        percentage = (score / total_questions) * 100 if total_questions > 0 else 0
+        # محاسبه بر اساس روش عکس
+        correct_count = len(correct_questions)
+        wrong_count = len(wrong_questions)
+        unanswered_count = len(unanswered_questions)
+        
+        # درصد بدون نمره منفی
+        percentage_without_penalty = (correct_count / total_questions) * 100 if total_questions > 0 else 0
+        
+        # محاسبه نمره با اعمال نمره منفی (هر 3 غلط، 1 صحیح را حذف می‌کند)
+        penalty_deduction = wrong_count // 3
+        final_score = max(0, correct_count - penalty_deduction)
+        
+        # درصد با نمره منفی
+        final_percentage = (final_score / total_questions) * 100 if total_questions > 0 else 0
         
         # ذخیره نتایج در دیتابیس (اگر ممکن باشد)
         saved_to_db = False
@@ -213,7 +224,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         total_questions,
                         str(user_answers),
                         cleaned_text,
-                        percentage,
+                        final_percentage,
                         str(wrong_questions),
                         str(unanswered_questions)
                     )
@@ -225,25 +236,23 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.error(f"Error saving to database: {e}")
         
-        # ارسال نتایج به کاربر
-        correct_count = len(correct_questions)
-        wrong_count = len(wrong_questions)
-        unanswered_count = len(unanswered_questions)
-        
+        # ارسال نتایج به کاربر مطابق عکس
         result_text = f"""
 📊 نتایج آزمون شما:
 
-✅ تعداد سوالات صحیح: {correct_count}
+✅ تعداد پاسخ صحیح: {correct_count}
+❌ تعداد پاسخ اشتباه: {wrong_count}
+⏸️ تعداد بی‌پاسخ: {unanswered_count}
+📝 تعداد کل سوالات: {total_questions}
+
+📈 درصد بدون نمره منفی: {percentage_without_penalty:.2f}%
+📉 درصد با نمره منفی: {final_percentage:.2f}%
+
 🔢 سوالات صحیح: {', '.join(map(str, correct_questions)) if correct_questions else 'ندارد'}
-
-❌ تعداد سوالات غلط: {wrong_count}
 🔢 سوالات غلط: {', '.join(map(str, wrong_questions)) if wrong_questions else 'ندارد'}
-
-⏸️ تعداد سوالات بی‌پاسخ: {unanswered_count}
 🔢 سوالات بی‌پاسخ: {', '.join(map(str, unanswered_questions)) if unanswered_questions else 'ندارد'}
 
-📈 درصد نمره: {percentage:.2f}%
-📋 نمره خام: {score:.2f} از {total_questions}
+💡 نکته: هر ۳ پاسخ اشتباه، ۱ پاسخ صحیح را خنثی می‌کند.
 """
         
         if not saved_to_db:
@@ -253,6 +262,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # پاک کردن وضعیت آزمون
         context.user_data.pop('exam_setup', None)
+
 # نمایش سوال با دکمه‌های اینلاین
 async def show_question(update: Update, context: ContextTypes.DEFAULT_TYPE, question_num):
     keyboard = [
