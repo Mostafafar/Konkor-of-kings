@@ -51,6 +51,7 @@ def init_db():
                 end_question INTEGER,
                 total_questions INTEGER,
                 exam_duration INTEGER,
+                elapsed_time REAL,
                 answers TEXT,
                 correct_answers TEXT,
                 score REAL,
@@ -120,7 +121,7 @@ async def show_all_questions(update: Update, context: ContextTypes.DEFAULT_TYPE)
         status = f" ✅ (گزینه {current_answer})" if current_answer else ""
         
         # اضافه کردن سوال به متن پیام
-     #   message_text += f"{question_num}){status}\n"
+        message_text += f"{question_num}){status}\n"
         
         # ایجاد دکمه‌های گزینه‌ها برای هر سوال با شماره سوال
         question_buttons = []
@@ -167,7 +168,6 @@ def create_progress_bar(percentage):
     empty = 10 - filled
     return f"[{'█' * filled}{'░' * empty}] {percentage:.1f}%"
 
-# تایمر با پیام پین شده
 # تایمر با پیام پین شده
 async def show_pinned_timer(context: ContextTypes.DEFAULT_TYPE, user_id: int, exam_setup: dict):
     exam_duration = exam_setup.get('exam_duration', 0)
@@ -309,6 +309,14 @@ async def finish_exam_auto(context: ContextTypes.DEFAULT_TYPE, user_id: int):
     except Exception as e:
         logger.error(f"Error sending auto-finish message: {e}")
 
+# محاسبه زمان صرف شده
+def calculate_elapsed_time(start_time):
+    """محاسبه زمان سپری شده از شروع آزمون"""
+    if not start_time:
+        return 0
+    elapsed = datetime.now() - start_time
+    return round(elapsed.total_seconds() / 60, 2)  # بازگشت زمان بر حسب دقیقه
+
 # پردازش مراحل ایجاد آزمون
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -448,6 +456,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         final_score = max(0, correct_count - penalty_deduction)
         final_percentage = (final_score / total_questions) * 100 if total_questions > 0 else 0
         
+        # محاسبه زمان صرف شده
+        elapsed_time = calculate_elapsed_time(exam_setup.get('start_time'))
+        
         # ذخیره نتایج در دیتابیس
         saved_to_db = False
         try:
@@ -457,8 +468,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 cur.execute(
                     """
                     INSERT INTO exams 
-                    (user_id, start_question, end_question, total_questions, exam_duration, answers, correct_answers, score, wrong_questions, unanswered_questions)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    (user_id, start_question, end_question, total_questions, exam_duration, elapsed_time, answers, correct_answers, score, wrong_questions, unanswered_questions)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         user_id,
@@ -466,6 +477,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         exam_setup.get('end_question'),
                         total_questions,
                         exam_setup.get('exam_duration'),
+                        elapsed_time,  # زمان صرف شده
                         str(user_answers),
                         cleaned_text,
                         final_percentage,
@@ -488,6 +500,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 ❌ تعداد پاسخ اشتباه: {wrong_count}
 ⏸️ تعداد بی‌پاسخ: {unanswered_count}
 📝 تعداد کل سوالات: {total_questions}
+⏰ زمان صرف شده: {elapsed_time:.2f} دقیقه
 
 📈 درصد بدون نمره منفی: {percentage_without_penalty:.2f}%
 📉 درصد با نمره منفی: {final_percentage:.2f}%
@@ -525,7 +538,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             job.schedule_removal()
 
 # مدیریت پاسخ‌های اینلاین
-# در تابع handle_answer، بخش مربوط به پاسخ‌گویی به سوالات را تغییر دهید:
 async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -565,6 +577,11 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         exam_setup['step'] = 'waiting_for_correct_answers'
         context.user_data['exam_setup'] = exam_setup
         
+        # محاسبه زمان صرف شده
+        start_time = exam_setup.get('start_time')
+        elapsed_time = calculate_elapsed_time(start_time)
+        exam_setup['elapsed_time'] = elapsed_time
+        
         # به روزرسانی در bot_data نیز
         if 'user_exams' in context.bot_data and user_id in context.bot_data['user_exams']:
             context.bot_data['user_exams'][user_id] = exam_setup
@@ -575,109 +592,28 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for job in current_jobs:
             job.schedule_removal()
         
+        # آنپین کردن پیام تایمر
+        if 'timer_message_id' in exam_setup:
+            try:
+                await context.bot.unpin_chat_message(
+                    chat_id=user_id,
+                    message_id=exam_setup['timer_message_id']
+                )
+            except Exception as e:
+                logger.error(f"Error unpinning timer message: {e}")
+        
         total_questions = exam_setup.get('total_questions')
         answered_count = len(exam_setup.get('answers', {}))
         
         await query.edit_message_text(
             text=f"📝 آزمون به پایان رسید.\n"
+                 f"⏰ زمان صرف شده: {elapsed_time:.2f} دقیقه\n"
                  f"📊 شما به {answered_count} از {total_questions} سوال پاسخ داده‌اید.\n\n"
                  f"لطفاً پاسخ‌های صحیح را به صورت یک رشته {total_questions} رقمی و بدون فاصله ارسال کنید.\n\n"
                  f"📋 مثال: برای {total_questions} سوال: {'1' * total_questions}"
         )
 
 # مشاهده نتایج قبلی
-# ابتدا یک تابع برای محاسبه زمان صرف شده اضافه کنید
-def calculate_elapsed_time(start_time):
-    """محاسبه زمان سپری شده از شروع آزمون"""
-    if not start_time:
-        return 0
-    elapsed = datetime.now() - start_time
-    return round(elapsed.total_seconds() / 60, 2)  # بازگشت زمان بر حسب دقیقه
-
-# در تابع handle_answer، بخش اتمام آزمون را اصلاح کنید:
-elif data == "finish_exam":
-    exam_setup['step'] = 'waiting_for_correct_answers'
-    context.user_data['exam_setup'] = exam_setup
-    
-    # محاسبه زمان صرف شده
-    start_time = exam_setup.get('start_time')
-    elapsed_time = calculate_elapsed_time(start_time)
-    exam_setup['elapsed_time'] = elapsed_time
-    
-    # به روزرسانی در bot_data نیز
-    if 'user_exams' in context.bot_data and user_id in context.bot_data['user_exams']:
-        context.bot_data['user_exams'][user_id] = exam_setup
-    
-    # حذف تایمر
-    job_name = f"timer_{user_id}"
-    current_jobs = context.job_queue.get_jobs_by_name(job_name)
-    for job in current_jobs:
-        job.schedule_removal()
-    
-    # آنپین کردن پیام تایمر
-    if 'timer_message_id' in exam_setup:
-        try:
-            await context.bot.unpin_chat_message(
-                chat_id=user_id,
-                message_id=exam_setup['timer_message_id']
-            )
-        except Exception as e:
-            logger.error(f"Error unpinning timer message: {e}")
-    
-    total_questions = exam_setup.get('total_questions')
-    answered_count = len(exam_setup.get('answers', {}))
-    
-    await query.edit_message_text(
-        text=f"📝 آزمون به پایان رسید.\n"
-             f"⏰ زمان صرف شده: {elapsed_time:.2f} دقیقه\n"
-             f"📊 شما به {answered_count} از {total_questions} سوال پاسخ داده‌اید.\n\n"
-             f"لطفاً پاسخ‌های صحیح را به صورت یک رشته {total_questions} رقمی و بدون فاصله ارسال کنید.\n\n"
-             f"📋 مثال: برای {total_questions} سوال: {'1' * total_questions}"
-    )
-
-# در بخش ذخیره نتایج در دیتابیس (تابع handle_message)، فیلد elapsed_time را اضافه کنید:
-# تغییر در بخش ذخیره نتایج:
-try:
-    conn = get_db_connection()
-    if conn:
-        cur = conn.cursor()
-        # ابتدا مطمئن شویم جدول ستون elapsed_time را دارد
-        try:
-            cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name='exams' AND column_name='elapsed_time'")
-            if not cur.fetchone():
-                cur.execute("ALTER TABLE exams ADD COLUMN elapsed_time REAL")
-                conn.commit()
-        except:
-            pass
-        
-        cur.execute(
-            """
-            INSERT INTO exams 
-            (user_id, start_question, end_question, total_questions, exam_duration, elapsed_time, answers, correct_answers, score, wrong_questions, unanswered_questions)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """,
-            (
-                user_id,
-                exam_setup.get('start_question'),
-                exam_setup.get('end_question'),
-                total_questions,
-                exam_setup.get('exam_duration'),
-                exam_setup.get('elapsed_time', 0),  # زمان صرف شده
-                str(user_answers),
-                cleaned_text,
-                final_percentage,
-                str(wrong_questions),
-                str(unanswered_questions)
-            )
-        )
-        conn.commit()
-        cur.close()
-        conn.close()
-        saved_to_db = True
-except Exception as e:
-    logger.error(f"Error saving to database: {e}")
-
-# همچنین در تابع show_results، زمان صرف شده را نیز نمایش دهید:
 async def show_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     
