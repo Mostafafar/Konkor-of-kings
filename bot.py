@@ -161,8 +161,14 @@ async def show_all_questions(update: Update, context: ContextTypes.DEFAULT_TYPE)
     exam_setup['exam_message_id'] = message.message_id
     context.user_data['exam_setup'] = exam_setup
 
-# تایمر با اعلان پیشرفته
-async def show_advanced_timer(context: ContextTypes.DEFAULT_TYPE, user_id: int, exam_setup: dict):
+# ایجاد نوار پیشرفت
+def create_progress_bar(percentage):
+    filled = min(10, int(percentage / 10))
+    empty = 10 - filled
+    return f"[{'█' * filled}{'░' * empty}] {percentage:.1f}%"
+
+# تایمر با پیام پین شده
+async def show_pinned_timer(context: ContextTypes.DEFAULT_TYPE, user_id: int, exam_setup: dict):
     exam_duration = exam_setup.get('exam_duration', 0)
     start_time = exam_setup.get('start_time')
     
@@ -174,36 +180,17 @@ async def show_advanced_timer(context: ContextTypes.DEFAULT_TYPE, user_id: int, 
     minutes = int(remaining_time // 60)
     seconds = int(remaining_time % 60)
     
-    # محاسبه درصد پیشرفت
-    progress_percent = min(100, (elapsed_time / (exam_duration * 60)) * 100)
-    
-    # ایجاد نوار پیشرفت گرافیکی
-    progress_bar = ""
-    for i in range(10):
-        if progress_percent >= (i + 1) * 10:
-            progress_bar += "█"
-        else:
-            progress_bar += "░"
-    
-    # انتخاب وضعیت بر اساس زمان
-    if remaining_time < 60:
-        status = "⏳ زمان رو به اتمام!"
-        color = "🔴"
-    elif remaining_time < 300:
-        status = "⏳ زمان در جریان"
-        color = "🟡"
-    else:
-        status = "⏳ زمان کافی"
-        color = "🟢"
+    # ایجاد اعلان تایمر پیشرفته
+    progress_percent = (elapsed_time / (exam_duration * 60)) * 100
+    progress_bar = create_progress_bar(progress_percent)
     
     timer_text = f"""
-{color} **اعلان زمان آزمون**
-─────────────────
-{status}
-⏰ باقیمانده: {minutes:02d}:{seconds:02d}
-{progress_bar} {progress_percent:.1f}%
-─────────────────
-💡 برای بازگشت به آزمون، به پیام سوالات مراجعه کنید.
+⏰ **زمان آزمون**
+━━━━━━━━━━━━━━━━
+⏳ باقیمانده: `{minutes:02d}:{seconds:02d}`
+{progress_bar}
+📊 پیشرفت: `{progress_percent:.1f}%`
+━━━━━━━━━━━━━━━━
 """
     
     # ارسال یا ویرایش پیام تایمر
@@ -215,6 +202,15 @@ async def show_advanced_timer(context: ContextTypes.DEFAULT_TYPE, user_id: int, 
                 text=timer_text,
                 parse_mode='Markdown'
             )
+            # پین کردن پیام
+            try:
+                await context.bot.pin_chat_message(
+                    chat_id=user_id,
+                    message_id=exam_setup['timer_message_id'],
+                    disable_notification=True
+                )
+            except:
+                pass
         except Exception as e:
             logger.error(f"Error editing timer message: {e}")
     else:
@@ -225,6 +221,15 @@ async def show_advanced_timer(context: ContextTypes.DEFAULT_TYPE, user_id: int, 
                 parse_mode='Markdown'
             )
             exam_setup['timer_message_id'] = message.message_id
+            # پین کردن پیام
+            try:
+                await context.bot.pin_chat_message(
+                    chat_id=user_id,
+                    message_id=message.message_id,
+                    disable_notification=True
+                )
+            except:
+                pass
             # ذخیره در bot_data
             if 'user_exams' in context.bot_data and user_id in context.bot_data['user_exams']:
                 context.bot_data['user_exams'][user_id] = exam_setup
@@ -263,8 +268,8 @@ async def update_timer(context: ContextTypes.DEFAULT_TYPE):
         await finish_exam_auto(context, user_id)
         return
     
-    # نمایش تایمر اعلان پیشرفته
-    await show_advanced_timer(context, user_id, exam_setup)
+    # نمایش تایمر پین شده
+    await show_pinned_timer(context, user_id, exam_setup)
 
 # اتمام خودکار آزمون وقتی زمان تمام شد
 async def finish_exam_auto(context: ContextTypes.DEFAULT_TYPE, user_id: int):
@@ -296,10 +301,10 @@ async def finish_exam_auto(context: ContextTypes.DEFAULT_TYPE, user_id: int):
                  f"📋 مثال: برای {total_questions} سوال: {'1' * total_questions}"
         )
         
-        # حذف پیام تایمر
+        # آنپین کردن پیام تایمر
         if 'timer_message_id' in exam_setup:
             try:
-                await context.bot.delete_message(
+                await context.bot.unpin_chat_message(
                     chat_id=user_id,
                     message_id=exam_setup['timer_message_id']
                 )
@@ -356,7 +361,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data['exam_setup'] = exam_setup
             
             await update.message.reply_text(
-                "⏰ لطفاً مدت زمان آزمون را به دقیта وارد کنید (0 برای بدون محدودیت):"
+                "⏰ لطفاً مدت زمان آزمون را به دقیقه وارد کنید (0 برای بدون محدودیت):"
             )
             
         except ValueError:
@@ -400,8 +405,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # نمایش تمام سوالات به صورت همزمان
             await show_all_questions(update, context)
             
-            # نمایش تایمر اعلان پیشرفته
-            await show_advanced_timer(context, user_id, exam_setup)
+            # نمایش تایمر پین شده
+            await show_pinned_timer(context, user_id, exam_setup)
             
         except ValueError:
             await update.message.reply_text("❌ لطفاً یک عدد معتبر وارد کنید.")
@@ -507,11 +512,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # پاک کردن وضعیت آزمون و تایمر
         context.user_data.pop('exam_setup', None)
         if 'user_exams' in context.bot_data and user_id in context.bot_data['user_exams']:
-            # حذف پیام تایمر
+            # آنپین کردن پیام تایمر
             exam_setup = context.bot_data['user_exams'][user_id]
             if 'timer_message_id' in exam_setup:
                 try:
-                    await context.bot.delete_message(
+                    await context.bot.unpin_chat_message(
                         chat_id=user_id,
                         message_id=exam_setup['timer_message_id']
                     )
@@ -631,8 +636,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     ⏰ ویژگی‌های تایمر:
     - نمایش زمان باقیمانده به صورت زنده
-    - اعلان پیشرفته با نوار پیشرفت
-    - تغییر رنگ بر اساس زمان باقیمانده
+    - پیام تایمر پین شده در بالای چت
+    - نوار پیشرفت گرافیکی
     - اتمام خودکار آزمون هنگام اتمام زمان
     
     ⚠️ توجه: هر ۳ پاسخ غلط، ۱ پاسخ صحیح را حذف می‌کند.
@@ -653,7 +658,7 @@ def main():
     application.add_handler(CallbackQueryHandler(handle_answer))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
-    logger.info("Bot started with advanced timer feature...")
+    logger.info("Bot started with pinned timer feature...")
     application.run_polling()
 
 if __name__ == "__main__":
