@@ -177,14 +177,13 @@ async def show_all_questions(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def update_timer(context: ContextTypes.DEFAULT_TYPE):
     job = context.job
     user_id = job.chat_id
-    user_data = context.application.user_data
     
-    if user_id not in user_data or 'exam_setup' not in user_data[user_id]:
+    if 'exam_setup' not in context.user_data:
         return
     
-    exam_setup = user_data[user_id]['exam_setup']
+    exam_setup = context.user_data['exam_setup']
     
-    if exam_setup.get('step') != 3:  # اگر در مرحله آزمون نیست
+    if exam_setup.get('step') != 4:  # اگر در مرحله آزمون نیست
         return
     
     exam_duration = exam_setup.get('exam_duration', 0)
@@ -210,11 +209,10 @@ async def update_timer(context: ContextTypes.DEFAULT_TYPE):
 
 # نمایش سوالات برای تایمر
 async def show_all_questions_for_timer(context: ContextTypes.DEFAULT_TYPE, user_id: int):
-    user_data = context.application.user_data
-    if user_id not in user_data or 'exam_setup' not in user_data[user_id]:
+    if 'exam_setup' not in context.user_data:
         return
     
-    exam_setup = user_data[user_id]['exam_setup']
+    exam_setup = context.user_data['exam_setup']
     start_question = exam_setup.get('start_question')
     end_question = exam_setup.get('end_question')
     user_answers = exam_setup.get('answers', {})
@@ -277,15 +275,14 @@ async def show_all_questions_for_timer(context: ContextTypes.DEFAULT_TYPE, user_
 
 # اتمام خودکار آزمون وقتی زمان تمام شد
 async def finish_exam_auto(context: ContextTypes.DEFAULT_TYPE, user_id: int):
-    user_data = context.application.user_data
-    if user_id not in user_data or 'exam_setup' not in user_data[user_id]:
+    if 'exam_setup' not in context.user_data:
         return
     
-    exam_setup = user_data[user_id]['exam_setup']
+    exam_setup = context.user_data['exam_setup']
     
     # تغییر وضعیت به انتظار برای پاسخ‌های صحیح
     exam_setup['step'] = 'waiting_for_correct_answers'
-    user_data[user_id]['exam_setup'] = exam_setup
+    context.user_data['exam_setup'] = exam_setup
     
     # حذف job تایمر
     job_name = f"timer_{user_id}"
@@ -378,12 +375,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if exam_duration > 0:
                 job_name = f"timer_{user_id}"
                 # حذف jobهای قبلی
-                current_jobs = context.application.job_queue.get_jobs_by_name(job_name)
+                current_jobs = context.job_queue.get_jobs_by_name(job_name)
                 for job in current_jobs:
                     job.schedule_removal()
                 
                 # ایجاد job جدید برای تایمر
-                context.application.job_queue.run_repeating(
+                context.job_queue.run_repeating(
                     update_timer,
                     interval=5,  # به روزرسانی هر 5 ثانیه
                     first=1,
@@ -498,7 +495,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # پاک کردن وضعیت آزمون و تایمر
         context.user_data.pop('exam_setup', None)
         job_name = f"timer_{user_id}"
-        current_jobs = context.application.job_queue.get_jobs_by_name(job_name)
+        current_jobs = context.job_queue.get_jobs_by_name(job_name)
         for job in current_jobs:
             job.schedule_removal()
 
@@ -536,7 +533,7 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # حذف تایمر
         job_name = f"timer_{user_id}"
-        current_jobs = context.application.job_queue.get_jobs_by_name(job_name)
+        current_jobs = context.job_queue.get_jobs_by_name(job_name)
         for job in current_jobs:
             job.schedule_removal()
         
