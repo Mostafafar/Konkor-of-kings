@@ -43,6 +43,8 @@ def init_db():
             return False
             
         cur = conn.cursor()
+        
+        # ایجاد جدول اگر وجود ندارد
         cur.execute('''
             CREATE TABLE IF NOT EXISTS exams (
                 id SERIAL PRIMARY KEY,
@@ -60,6 +62,26 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+        
+        # بررسی و اضافه کردن ستون‌های缺失 اگر وجود ندارند
+        columns_to_check = [
+            'exam_duration',
+            'elapsed_time'
+        ]
+        
+        for column in columns_to_check:
+            cur.execute(f"""
+                SELECT column_name 
+                FROM information_schema.columns 
+                WHERE table_name='exams' AND column_name='{column}'
+            """)
+            if not cur.fetchone():
+                if column == 'exam_duration':
+                    cur.execute("ALTER TABLE exams ADD COLUMN exam_duration INTEGER")
+                elif column == 'elapsed_time':
+                    cur.execute("ALTER TABLE exams ADD COLUMN elapsed_time REAL")
+                logger.info(f"Added missing column: {column}")
+        
         conn.commit()
         cur.close()
         conn.close()
