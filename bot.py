@@ -124,9 +124,26 @@ def get_tehran_time():
 # مدیریت دستور start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    welcome_text = "🎯 بیایید پاسخبرگ بسازیم و رقابت کنیم!\n\nبرای شروع از دستور /ساخت_پاسخبرگ استفاده کنید."
-    await update.message.reply_text(welcome_text)
+    welcome_text = "🎯 بیایید پاسخبرگ بسازیم و رقابت کنیم!\n\nبرای شروع از دستور /new_exam استفاده کنید."
+    
+    # ایجاد کیبورد برای دسترسی آسان
+    keyboard = [
+        [InlineKeyboardButton("📝 ساخت پاسخبرگ", callback_data="new_exam")],
+        [InlineKeyboardButton("📊 گزارش نتایج", callback_data="results")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(welcome_text, reply_markup=reply_markup)
 
+# مدیریت callback query برای دکمه‌ها
+async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == "new_exam":
+        await new_exam(update, context)
+    elif query.data == "results":
+        await show_results(update, context)
 # ایجاد آزمون جدید
 async def new_exam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -777,8 +794,9 @@ def main():
     application = Application.builder().token(TOKEN).build()
     
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("ساخت_پاسخبرگ", new_exam))
-    application.add_handler(CommandHandler("گزارش", show_results))
+    application.add_handler(CommandHandler("new_exam", new_exam))
+    application.add_handler(CommandHandler("results", show_results))
+    application.add_handler(CallbackQueryHandler(handle_button))
     application.add_handler(CallbackQueryHandler(handle_answer))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
