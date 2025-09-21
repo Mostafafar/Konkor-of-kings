@@ -680,6 +680,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             job.schedule_removal()
 
 # مدیریت پاسخ‌های اینلاین
+# مدیریت پاسخ‌های اینلاین
 async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
