@@ -819,6 +819,7 @@ async def show_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(result_text)
 
 # تابع اصلی
+# تابع اصلی
 def main():
     if not init_db():
         logger.warning("Database initialization failed. The bot will work without database support.")
@@ -828,11 +829,11 @@ def main():
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("new_exam", new_exam))
     application.add_handler(CommandHandler("results", show_results))
-    application.add_handler(CallbackQueryHandler(handle_button))
-    application.add_handler(CallbackQueryHandler(handle_answer))
+    application.add_handler(CallbackQueryHandler(handle_button, pattern="^(new_exam|results)$"))
+    application.add_handler(CallbackQueryHandler(handle_answer, pattern="^(ans_|page_|finish_exam|ignore)"))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
-    logger.info("Bot started with course/topic feature and jalali date...")
+    logger.info("Bot started with pagination feature...")
     application.run_polling()
 
 if __name__ == "__main__":
