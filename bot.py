@@ -124,26 +124,9 @@ def get_tehran_time():
 # مدیریت دستور start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    welcome_text = "🎯 بیایید پاسخبرگ بسازیم و رقابت کنیم!\n\nبرای شروع از دستور /new_exam استفاده کنید."
-    
-    # ایجاد کیبورد برای دسترسی آسان
-    keyboard = [
-        [InlineKeyboardButton("📝 ساخت پاسخبرگ", callback_data="new_exam")],
-        [InlineKeyboardButton("📊 گزارش نتایج", callback_data="results")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await update.message.reply_text(welcome_text, reply_markup=reply_markup)
+    welcome_text = "🎯 Let's create answer sheets and compete!\n\nUse the /new_exam command to get started."
+    await update.message.reply_text(welcome_text)
 
-# مدیریت callback query برای دکمه‌ها
-async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
-    if query.data == "new_exam":
-        await new_exam(update, context)
-    elif query.data == "results":
-        await show_results(update, context)
 # ایجاد آزمون جدید
 async def new_exam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -154,7 +137,7 @@ async def new_exam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['exam_setup'] = {'step': 'course_name'}
     
     await update.message.reply_text(
-        "📚 لطفاً نام درس را وارد کنید:"
+        "📚 Please enter the course name:"
     )
 
 # نمایش تمام سوالات به صورت همزمان با فرمت جدید
@@ -164,12 +147,12 @@ async def show_all_questions(update: Update, context: ContextTypes.DEFAULT_TYPE)
     end_question = exam_setup.get('end_question')
     user_answers = exam_setup.get('answers', {})
     
-    course_name = exam_setup.get('course_name', 'نامعلوم')
-    topic_name = exam_setup.get('topic_name', 'نامعلوم')
+    course_name = exam_setup.get('course_name', 'Unknown')
+    topic_name = exam_setup.get('topic_name', 'Unknown')
     
-    message_text = f"📚 درس: {course_name}\n"
-    message_text += f"📖 مبحث: {topic_name}\n\n"
-    message_text += "📝 لطفاً به سوالات پاسخ دهید:\n\n"
+    message_text = f"📚 Course: {course_name}\n"
+    message_text += f"📖 Topic: {topic_name}\n\n"
+    message_text += "📝 Please answer the questions:\n\n"
     
     # ایجاد دکمه‌های اینلاین برای تمام سوالات
     keyboard = []
@@ -177,7 +160,7 @@ async def show_all_questions(update: Update, context: ContextTypes.DEFAULT_TYPE)
     for question_num in range(start_question, end_question + 1):
         # وضعیت پاسخ فعلی
         current_answer = user_answers.get(str(question_num))
-        status = f" ✅ (گزینه {current_answer})" if current_answer else ""
+        status = f" ✅ (Option {current_answer})" if current_answer else ""
         
         # اضافه کردن سوال به متن پیام
         # message_text += f"{question_num}){status}\n"
@@ -194,7 +177,7 @@ async def show_all_questions(update: Update, context: ContextTypes.DEFAULT_TYPE)
         
         keyboard.append(question_buttons)
     
-    # اضافه کردن دکمه اتمام آزمون
+    # اضافه کردن دکمه اتمام آزمون (فارسی)
     keyboard.append([InlineKeyboardButton("🎯 اتمام آزمون و ارسال پاسخ‌ها", callback_data="finish_exam")])
     
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -244,11 +227,11 @@ async def show_pinned_timer(context: ContextTypes.DEFAULT_TYPE, user_id: int, ex
     progress_percent = (elapsed_time / (exam_duration * 60)) * 100
     progress_bar = create_progress_bar(progress_percent)
     
-    course_name = exam_setup.get('course_name', 'نامعلوم')
-    topic_name = exam_setup.get('topic_name', 'نامعلوم')
+    course_name = exam_setup.get('course_name', 'Unknown')
+    topic_name = exam_setup.get('topic_name', 'Unknown')
     
     # فقط نوار پیشرفت و زمان باقیمانده نمایش داده شود
-    timer_text = f"📚 {course_name} - {topic_name}\n⏳ باقیمانده: {minutes:02d}:{seconds:02d}\n{progress_bar}"
+    timer_text = f"📚 {course_name} - {topic_name}\n⏳ Remaining: {minutes:02d}:{seconds:02d}\n{progress_bar}"
     
     # ارسال یا ویرایش پیام تایمر
     if 'timer_message_id' in exam_setup:
@@ -348,18 +331,18 @@ async def finish_exam_auto(context: ContextTypes.DEFAULT_TYPE, user_id: int):
     total_questions = exam_setup.get('total_questions')
     answered_count = len(exam_setup.get('answers', {}))
     
-    course_name = exam_setup.get('course_name', 'نامعلوم')
-    topic_name = exam_setup.get('topic_name', 'نامعلوم')
+    course_name = exam_setup.get('course_name', 'Unknown')
+    topic_name = exam_setup.get('topic_name', 'Unknown')
     
     # ارسال پیام اتمام زمان
     try:
         await context.bot.send_message(
             chat_id=user_id,
             text=f"📚 {course_name} - {topic_name}\n"
-                 f"⏰ زمان آزمون به پایان رسید!\n"
-                 f"📊 شما به {answered_count} از {total_questions} سوال پاسخ داده‌اید.\n\n"
-                 f"لطفاً پاسخ‌های صحیح را به صورت یک رشته {total_questions} رقمی و بدون فاصله ارسال کنید.\n\n"
-                 f"📋 مثال: برای {total_questions} سوال: {'1' * total_questions}"
+                 f"⏰ Exam time is over!\n"
+                 f"📊 You answered {answered_count} out of {total_questions} questions.\n\n"
+                 f"Please send the correct answers as a {total_questions}-digit string without spaces.\n\n"
+                 f"📋 Example: for {total_questions} questions: {'1' * total_questions}"
         )
         
         # آنپین کردن پیام تایمر
@@ -389,50 +372,50 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     
     if 'exam_setup' not in context.user_data:
-        await update.message.reply_text("لطفا ابتدا با دستور /ساخت_پاسخبرگ یک آزمون جدید شروع کنید.")
+        await update.message.reply_text("Please start a new exam first with the /new_exam command.")
         return
     
     exam_setup = context.user_data['exam_setup']
     
     if exam_setup.get('step') == 'course_name':
         if not text:
-            await update.message.reply_text("❌ نام درس نمی‌تواند خالی باشد. لطفاً مجدداً وارد کنید:")
+            await update.message.reply_text("❌ Course name cannot be empty. Please enter again:")
             return
             
         exam_setup['course_name'] = text
         exam_setup['step'] = 'topic_name'
         context.user_data['exam_setup'] = exam_setup
         await update.message.reply_text(
-            "📖 لطفاً نام مبحث را وارد کنید:"
+            "📖 Please enter the topic name:"
         )
     
     elif exam_setup.get('step') == 'topic_name':
         if not text:
-            await update.message.reply_text("❌ نام مبحث نمی‌تواند خالی باشد. لطفاً مجدداً وارد کنید:")
+            await update.message.reply_text("❌ Topic name cannot be empty. Please enter again:")
             return
             
         exam_setup['topic_name'] = text
         exam_setup['step'] = 1
         context.user_data['exam_setup'] = exam_setup
         await update.message.reply_text(
-            "🔢 لطفاً شماره اولین سوال را وارد کنید:"
+            "🔢 Please enter the first question number:"
         )
     
     elif exam_setup.get('step') == 1:
         try:
             start_question = int(text)
             if start_question <= 0:
-                await update.message.reply_text("❌ شماره سوال باید بزرگتر از صفر باشد.")
+                await update.message.reply_text("❌ Question number must be greater than zero.")
                 return
                 
             exam_setup['start_question'] = start_question
             exam_setup['step'] = 2
             context.user_data['exam_setup'] = exam_setup
             await update.message.reply_text(
-                "🔢 لطفاً شماره آخرین سوال را وارد کنید:"
+                "🔢 Please enter the last question number:"
             )
         except ValueError:
-            await update.message.reply_text("❌ لطفاً یک عدد معتبر وارد کنید.")
+            await update.message.reply_text("❌ Please enter a valid number.")
     
     elif exam_setup.get('step') == 2:
         try:
@@ -440,12 +423,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             start_question = exam_setup.get('start_question')
             
             if end_question <= start_question:
-                await update.message.reply_text("❌ شماره آخرین سوال باید بزرگتر از اولین سوال باشد.")
+                await update.message.reply_text("❌ Last question number must be greater than first question.")
                 return
             
             total_questions = end_question - start_question + 1
             if total_questions > 50:
-                await update.message.reply_text("❌ حداکثر تعداد سوالات مجاز 50 عدد است.")
+                await update.message.reply_text("❌ Maximum allowed number of questions is 50.")
                 return
                 
             exam_setup['end_question'] = end_question
@@ -454,17 +437,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data['exam_setup'] = exam_setup
             
             await update.message.reply_text(
-                "⏰ لطفاً مدت زمان آزمون را به دقیقه وارد کنید (0 برای بدون محدودیت):"
+                "⏰ Please enter the exam duration in minutes (0 for no time limit):"
             )
             
         except ValueError:
-            await update.message.reply_text("❌ لطفاً یک عدد معتبر وارد کنید.")
+            await update.message.reply_text("❌ Please enter a valid number.")
     
     elif exam_setup.get('step') == 3:
         try:
             exam_duration = int(text)
             if exam_duration < 0:
-                await update.message.reply_text("❌ زمان آزمون نمی‌تواند منفی باشد.")
+                await update.message.reply_text("❌ Exam time cannot be negative.")
                 return
                 
             exam_setup['exam_duration'] = exam_duration
@@ -502,7 +485,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await show_pinned_timer(context, user_id, exam_setup)
             
         except ValueError:
-            await update.message.reply_text("❌ لطفاً یک عدد معتبر وارد کنید.")
+            await update.message.reply_text("❌ Please enter a valid number.")
     
     elif exam_setup.get('step') == 'waiting_for_correct_answers':
         total_questions = exam_setup.get('total_questions')
@@ -512,7 +495,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         if len(cleaned_text) != total_questions:
             await update.message.reply_text(
-                f"❌ رشته ارسالی باید شامل {total_questions} عدد باشد. شما {len(cleaned_text)} عدد وارد کردید. لطفاً مجدداً وارد کنید:"
+                f"❌ The sent string must contain {total_questions} digits. You entered {len(cleaned_text)} digits. Please enter again:"
             )
             return
         
@@ -597,36 +580,36 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.error(f"Error saving to database: {e}")
 
-        course_name = exam_setup.get('course_name', 'نامعلوم')
-        topic_name = exam_setup.get('topic_name', 'نامعلوم')
+        course_name = exam_setup.get('course_name', 'Unknown')
+        topic_name = exam_setup.get('topic_name', 'Unknown')
         
         # ارسال نتایج
         result_text = f"""
-📊 نتایج آزمون شما:
+📊 Your exam results:
 
-📚 درس: {course_name}
-📖 مبحث: {topic_name}
-📅 تاریخ: {jalali_date}
-⏰ زمان: {tehran_time}
+📚 Course: {course_name}
+📖 Topic: {topic_name}
+📅 Date: {jalali_date}
+⏰ Time: {tehran_time}
 
-✅ تعداد پاسخ صحیح: {correct_count}
-❌ تعداد پاسخ اشتباه: {wrong_count}
-⏸️ تعداد بی‌پاسخ: {unanswered_count}
-📝 تعداد کل سوالات: {total_questions}
-⏰ زمان صرف شده: {elapsed_time:.2f} دقیقه
+✅ Correct answers: {correct_count}
+❌ Wrong answers: {wrong_count}
+⏸️ Unanswered: {unanswered_count}
+📝 Total questions: {total_questions}
+⏰ Time spent: {elapsed_time:.2f} minutes
 
-📈 درصد بدون نمره منفی: {percentage_without_penalty:.2f}%
-📉 درصد با نمره منفی: {final_percentage:.2f}%
+📈 Score without penalty: {percentage_without_penalty:.2f}%
+📉 Score with penalty: {final_percentage:.2f}%
 
-🔢 سوالات صحیح: {', '.join(map(str, correct_questions)) if correct_questions else 'ندارد'}
-🔢 سوالات غلط: {', '.join(map(str, wrong_questions)) if wrong_questions else 'ندارد'}
-🔢 سوالات بی‌پاسخ: {', '.join(map(str, unanswered_questions)) if unanswered_questions else 'ندارد'}
+🔢 Correct questions: {', '.join(map(str, correct_questions)) if correct_questions else 'None'}
+🔢 Wrong questions: {', '.join(map(str, wrong_questions)) if wrong_questions else 'None'}
+🔢 Unanswered questions: {', '.join(map(str, unanswered_questions)) if unanswered_questions else 'None'}
 
-💡 نکته: هر ۳ پاسخ اشتباه، معادل ۱ پاسخ صحیح نمره منفی دارد.
+💡 Note: Every 3 wrong answers equals 1 correct answer penalty.
 """
 
         if not saved_to_db:
-            result_text += "\n\n⚠️ نتایج در پایگاه داده ذخیره نشد (مشکل اتصال)."
+            result_text += "\n\n⚠️ Results were not saved to database (connection issue)."
 
         await update.message.reply_text(result_text)
         
@@ -662,7 +645,7 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     if 'exam_setup' not in context.user_data:
-        await query.edit_message_text("⚠️ لطفا ابتدا با /ساخت_پاسخبرگ یک آزمون جدید شروع کنید.")
+        await query.edit_message_text("⚠️ Please start a new exam first with /new_exam.")
         return
         
     exam_setup = context.user_data['exam_setup']
@@ -718,16 +701,16 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         total_questions = exam_setup.get('total_questions')
         answered_count = len(exam_setup.get('answers', {}))
         
-        course_name = exam_setup.get('course_name', 'نامعلوم')
-        topic_name = exam_setup.get('topic_name', 'نامعلوم')
+        course_name = exam_setup.get('course_name', 'Unknown')
+        topic_name = exam_setup.get('topic_name', 'Unknown')
         
         await query.edit_message_text(
             text=f"📚 {course_name} - {topic_name}\n"
-                 f"📝 آزمون به پایان رسید.\n"
-                 f"⏰ زمان صرف شده: {elapsed_time:.2f} دقیقه\n"
-                 f"📊 شما به {answered_count} از {total_questions} سوال پاسخ داده‌اید.\n\n"
-                 f"لطفاً پاسخ‌های صحیح را به صورت یک رشته {total_questions} رقمی و بدون فاصله ارسال کنید.\n\n"
-                 f"📋 مثال: برای {total_questions} سوال: {'1' * total_questions}"
+                 f"📝 Exam finished.\n"
+                 f"⏰ Time spent: {elapsed_time:.2f} minutes\n"
+                 f"📊 You answered {answered_count} out of {total_questions} questions.\n\n"
+                 f"Please send the correct answers as a {total_questions}-digit string without spaces.\n\n"
+                 f"📋 Example: for {total_questions} questions: {'1' * total_questions}"
         )
 
 # مشاهده نتایج قبلی
@@ -737,7 +720,7 @@ async def show_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         conn = get_db_connection()
         if conn is None:
-            await update.message.reply_text("⚠️ در حال حاضر امکان دسترسی به تاریخچه نتایج وجود ندارد.")
+            await update.message.reply_text("⚠️ Currently unable to access result history.")
             return
             
         cur = conn.cursor()
@@ -752,7 +735,7 @@ async def show_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.close()
         
         if results:
-            result_text = "📋 آخرین نتایج آزمون‌های شما:\n\n"
+            result_text = "📋 Your recent exam results:\n\n"
             for i, result in enumerate(results, 1):
                 try:
                     course_name, topic_name, date, score, start_q, end_q, duration, elapsed, jalali_date, tehran_time = result
@@ -763,26 +746,26 @@ async def show_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     score = score or 0
                     start_q = start_q or 0
                     end_q = end_q or 0
-                    course_name = course_name or 'نامعلوم'
-                    topic_name = topic_name or 'نامعلوم'
-                    jalali_date = jalali_date or 'نامعلوم'
-                    tehran_time = tehran_time or 'نامعلوم'
+                    course_name = course_name or 'Unknown'
+                    topic_name = topic_name or 'Unknown'
+                    jalali_date = jalali_date or 'Unknown'
+                    tehran_time = tehran_time or 'Unknown'
                     
-                    time_text = f"{elapsed:.1f} دقیقه از {duration} دقیقه" if duration and duration > 0 else f"{elapsed:.1f} دقیقه"
+                    time_text = f"{elapsed:.1f} minutes of {duration} minutes" if duration and duration > 0 else f"{elapsed:.1f} minutes"
                     
                     result_text += f"{i}. {course_name} - {topic_name}\n"
-                    result_text += f"   سوالات {start_q}-{end_q} - زمان: {time_text}\n"
-                    result_text += f"   نمره: {score:.2f}% - تاریخ: {jalali_date} {tehran_time}\n\n"
+                    result_text += f"   Questions {start_q}-{end_q} - Time: {time_text}\n"
+                    result_text += f"   Score: {score:.2f}% - Date: {jalali_date} {tehran_time}\n\n"
                 
                 except Exception as e:
                     logger.error(f"Error processing result {i}: {e}")
-                    result_text += f"{i}. خطا در پردازش نتیجه\n\n"
+                    result_text += f"{i}. Error processing result\n\n"
         else:
-            result_text = "📭 هیچ نتیجه‌ای برای نمایش وجود ندارد."
+            result_text = "📭 No results to display."
             
     except Exception as e:
         logger.error(f"Error retrieving results: {e}")
-        result_text = "⚠️ خطایی در دریافت نتایج رخ داد."
+        result_text = "⚠️ An error occurred while retrieving results."
     
     await update.message.reply_text(result_text)
 
@@ -796,7 +779,6 @@ def main():
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("new_exam", new_exam))
     application.add_handler(CommandHandler("results", show_results))
-    application.add_handler(CallbackQueryHandler(handle_button))
     application.add_handler(CallbackQueryHandler(handle_answer))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
