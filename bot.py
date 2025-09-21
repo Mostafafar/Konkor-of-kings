@@ -31,6 +31,9 @@ DB_CONFIG = {
 # منطقه زمانی تهران
 TEHRAN_TZ = pytz.timezone('Asia/Tehran')
 
+# تنظیمات پیجینیشن
+QUESTIONS_PER_PAGE = 10  # حداکثر ۱۰ سوال در هر صفحه
+
 def get_db_connection():
     try:
         conn = psycopg2.connect(**DB_CONFIG)
@@ -124,25 +127,26 @@ def get_tehran_time():
 # مدیریت دستور start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    welcome_text = """
-    🤖 به ربات آزمون تستی خوش آمدید!
-
-    📝 برای شروع یک آزمون جدید، از دستور /new_exam استفاده کنید.
-    📊 برای مشاهده نتایج قبلی، از دستور /results استفاده کنید.
-    🆘 برای راهنما، از دستور /help استفاده کنید.
+    welcome_text = "🎯 بیایید پاسخبرگ بسازیم و رقابت کنیم!\n\nبرای شروع از دستور /new_exam استفاده کنید."
     
-    🎯 نحوه استفاده:
-    1. با /new_exam شروع کنید
-    2. نام درس و مبحث را وارد کنید
-    3. محدوده سوالات و زمان آزمون را مشخص کنید
-    4. با دکمه‌ها به سوالات پاسخ دهید
-    5. در پایان، پاسخ‌های صحیح را وارد کنید
-    6. نتایج را مشاهده کنید
+    # ایجاد کیبورد برای دسترسی آسان
+    keyboard = [
+        [InlineKeyboardButton("📝 ساخت پاسخبرگ", callback_data="new_exam")],
+        [InlineKeyboardButton("📊 گزارش نتایج", callback_data="results")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
     
-    ⏰ دارای تایمر پیشرفته برای مدیریت زمان آزمون
-    """
-    await update.message.reply_text(welcome_text)
+    await update.message.reply_text(welcome_text, reply_markup=reply_markup)
 
+# مدیریت callback query برای دکمه‌ها
+async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == "new_exam":
+        await new_exam(update, context)
+    elif query.data == "results":
+        await show_results(update, context)
 # ایجاد آزمون جدید
 async def new_exam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -156,8 +160,12 @@ async def new_exam(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📚 لطفاً نام درس را وارد کنید:"
     )
 
-# نمایش تمام سوالات به صورت همزمان با فرمت جدید
-async def show_all_questions(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# محاسبه تعداد صفحات
+def calculate_total_pages(total_questions):
+    return (total_questions + QUESTIONS_PER_PAGE - 1) // QUESTIONS_PER_PAGE
+
+# نمایش سوالات به صورت صفحه‌بندی شده
+async def show_questions_page(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 1):
     exam_setup = context.user_data['exam_setup']
     start_question = exam_setup.get('start_question')
     end_question = exam_setup.get('end_question')
@@ -165,21 +173,28 @@ async def show_all_questions(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     course_name = exam_setup.get('course_name', 'نامعلوم')
     topic_name = exam_setup.get('topic_name', 'نامعلوم')
+    total_questions = exam_setup.get('total_questions')
+    
+    # محاسبه صفحات
+    total_pages = calculate_total_pages(total_questions)
+    page = max(1, min(page, total_pages))
+    
+    # محاسبه محدوده سوالات برای این صفحه
+    start_idx = (page - 1) * QUESTIONS_PER_PAGE
+    end_idx = min(start_idx + QUESTIONS_PER_PAGE, total_questions)
     
     message_text = f"📚 درس: {course_name}\n"
-    message_text += f"📖 مبحث: {topic_name}\n\n"
+    message_text += f"📖 مبحث: {topic_name}\n"
+    message_text += f"📄 صفحه {page} از {total_pages}\n\n"
     message_text += "📝 لطفاً به سوالات پاسخ دهید:\n\n"
     
-    # ایجاد دکمه‌های اینلاین برای تمام سوالات
+    # ایجاد دکمه‌های اینلاین برای سوالات این صفحه
     keyboard = []
     
-    for question_num in range(start_question, end_question + 1):
+    for question_num in range(start_question + start_idx, start_question + end_idx):
         # وضعیت پاسخ فعلی
         current_answer = user_answers.get(str(question_num))
         status = f" ✅ (گزینه {current_answer})" if current_answer else ""
-        
-        # اضافه کردن سوال به متن پیام
-        # message_text += f"{question_num}){status}\n"
         
         # ایجاد دکمه‌های گزینه‌ها برای هر سوال با شماره سوال
         question_buttons = []
@@ -193,10 +208,25 @@ async def show_all_questions(update: Update, context: ContextTypes.DEFAULT_TYPE)
         
         keyboard.append(question_buttons)
     
+    # دکمه‌های ناوبری بین صفحات
+    navigation_buttons = []
+    if total_pages > 1:
+        if page > 1:
+            navigation_buttons.append(InlineKeyboardButton("◀️ صفحه قبلی", callback_data=f"page_{page-1}"))
+        if page < total_pages:
+            navigation_buttons.append(InlineKeyboardButton("صفحه بعدی ▶️", callback_data=f"page_{page+1}"))
+        
+        if navigation_buttons:
+            keyboard.append(navigation_buttons)
+    
     # اضافه کردن دکمه اتمام آزمون
     keyboard.append([InlineKeyboardButton("🎯 اتمام آزمون و ارسال پاسخ‌ها", callback_data="finish_exam")])
     
     reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    # ذخیره شماره صفحه فعلی
+    exam_setup['current_page'] = page
+    context.user_data['exam_setup'] = exam_setup
     
     # اگر قبلاً پیامی ارسال شده، آن را ویرایش کن
     if 'exam_message_id' in exam_setup:
@@ -388,7 +418,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     
     if 'exam_setup' not in context.user_data:
-        await update.message.reply_text("لطفا ابتدا با دستور /new_exam یک آزمون جدید شروع کنید.")
+        await update.message.reply_text("لطفا ابتدا با دستور /ساخت_پاسخبرگ یک آزمون جدید شروع کنید.")
         return
     
     exam_setup = context.user_data['exam_setup']
@@ -443,8 +473,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
             
             total_questions = end_question - start_question + 1
-            if total_questions > 50:
-                await update.message.reply_text("❌ حداکثر تعداد سوالات مجاز 50 عدد است.")
+            if total_questions > 200:  # افزایش محدودیت به 200 سوال
+                await update.message.reply_text("❌ حداکثر تعداد سوالات مجاز 200 عدد است.")
                 return
                 
             exam_setup['end_question'] = end_question
@@ -494,8 +524,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     name=job_name
                 )
             
-            # نمایش تمام سوالات به صورت همزمان
-            await show_all_questions(update, context)
+            # نمایش اولین صفحه سوالات
+            await show_questions_page(update, context, page=1)
             
             # نمایش تایمر پین شده
             await show_pinned_timer(context, user_id, exam_setup)
@@ -661,7 +691,7 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     if 'exam_setup' not in context.user_data:
-        await query.edit_message_text("⚠️ لطفا ابتدا با /new_exam یک آزمون جدید شروع کنید.")
+        await query.edit_message_text("⚠️ لطفا ابتدا با /ساخت_پاسخبرگ یک آزمون جدید شروع کنید.")
         return
         
     exam_setup = context.user_data['exam_setup']
@@ -678,12 +708,14 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if 'user_exams' in context.bot_data and user_id in context.bot_data['user_exams']:
             context.bot_data['user_exams'][user_id] = exam_setup
         
-        # به جای حذف پیام، آن را ویرایش کنیم
-        try:
-            await show_all_questions(update, context)
-        except Exception as e:
-            logger.error(f"Error updating message: {e}")
-            # اگر ویرایش ناموفق بود، پیام جدید ارسال نکنیم
+        # نمایش مجدد صفحه فعلی با پاسخ به روز شده
+        current_page = exam_setup.get('current_page', 1)
+        await show_questions_page(update, context, current_page)
+    
+    elif data.startswith("page_"):
+        # تغییر صفحه
+        page = int(data.split("_")[1])
+        await show_questions_page(update, context, page)
     
     elif data == "finish_exam":
         exam_setup['step'] = 'waiting_for_correct_answers'
@@ -785,34 +817,6 @@ async def show_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(result_text)
 
-# راهنمای استفاده
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    help_text = """
-    📖 راهنمای استفاده از ربات آزمون تستی:
-    
-    1. /start - شروع کار با ربات
-    2. /new_exam - ایجاد یک آزمون جدید
-    3. /results - مشاهده نتایج قبلی
-    4. /help - نمایش این راهنما
-    
-    🎯 نحوه کار:
-    - با /new_exam شروع کنید
-    - نام درس و مبحث را وارد کنید
-    - محدوده سوالات و زمان آزمون را مشخص کنید
-    - با دکمه‌ها به سوالات پاسخ دهید
-    - در پایان، پاسخ‌های صحیح را وارد کنید
-    - نتایج را مشاهده کنید
-    
-    ⏰ ویژگی‌های تایمر:
-    - نمایش زمان باقیمانده به صورت زنده
-    - پیام تایمر پین شده در بالای چت
-    - نوار پیشرفت گرافیکی
-    - اتمام خودکار آزمون هنگام اتمام زمان
-    
-    ⚠️ توجه: هر ۳ پاسخ غلط، ۱ پاسخ صحیح را حذف می‌کند.
-    """
-    await update.message.reply_text(help_text)
-
 # تابع اصلی
 def main():
     if not init_db():
@@ -823,7 +827,7 @@ def main():
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("new_exam", new_exam))
     application.add_handler(CommandHandler("results", show_results))
-    application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CallbackQueryHandler(handle_button))
     application.add_handler(CallbackQueryHandler(handle_answer))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
