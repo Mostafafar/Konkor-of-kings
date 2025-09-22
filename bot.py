@@ -275,10 +275,14 @@ async def show_correct_answers_page(update: Update, context: ContextTypes.DEFAUL
     start_idx = (page - 1) * QUESTIONS_PER_PAGE
     end_idx = min(start_idx + QUESTIONS_PER_PAGE, total_questions)
     
+    # محاسبه تعداد پاسخ‌های وارد شده
+    answered_count = len(correct_answers)
+    
     message_text = f"📚 درس: {course_name}\n"
     message_text += f"📖 مبحث: {topic_name}\n"
-    message_text += f"📄 صفحه {page} از {total_pages}\n\n"
-    message_text += "✅ لطفاً پاسخ‌های صحیح را برای سوالات زیر انتخاب کنید:\n\n"
+    message_text += f"📄 صفحه {page} از {total_pages}\n"
+    message_text += f"✅ پاسخ‌های وارد شده: {answered_count}/{total_questions}\n\n"
+    message_text += "لطفاً پاسخ‌های صحیح را برای سوالات زیر انتخاب کنید:\n\n"
     
     # ایجاد دکمه‌های اینلاین برای سوالات این صفحه
     keyboard = []
@@ -310,8 +314,11 @@ async def show_correct_answers_page(update: Update, context: ContextTypes.DEFAUL
         if navigation_buttons:
             keyboard.append(navigation_buttons)
     
-    # اضافه کردن دکمه اتمام وارد کردن پاسخ‌های صحیح
-    keyboard.append([InlineKeyboardButton("✅ اتمام وارد کردن پاسخ‌های صحیح", callback_data="finish_correct_answers")])
+    # اضافه کردن دکمه اتمام وارد کردن پاسخ‌های صحیح (فقط اگر همه سوالات پاسخ داشته باشند)
+    if answered_count == total_questions:
+        keyboard.append([InlineKeyboardButton("✅ اتمام وارد کردن پاسخ‌های صحیح", callback_data="finish_correct_answers")])
+    else:
+        keyboard.append([InlineKeyboardButton("⏳ لطفاً برای همه سوالات پاسخ وارد کنید", callback_data="ignore")])
     
     # اضافه کردن دکمه برای تغییر روش وارد کردن پاسخ‌ها
     keyboard.append([InlineKeyboardButton("🔢 وارد کردن پاسخ‌ها به صورت رشته عددی", callback_data="switch_to_text_input")])
@@ -487,7 +494,7 @@ async def finish_exam_auto(context: ContextTypes.DEFAULT_TYPE, user_id: int):
     
     # ارسال پیام اتمام زمان
     try:
-        await context.bot.send_message(
+        message = await context.bot.send_message(
             chat_id=user_id,
             text=f"📚 {course_name} - {topic_name}\n"
                  f"⏰ زمان آزمون به پایان رسید!\n"
@@ -898,9 +905,10 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         correct_answers = exam_setup.get('correct_answers', {})
         
         if len(correct_answers) != total_questions:
+            # این حالت نباید اتفاق بیفتد چون دکمه فقط زمانی فعال می‌شود که همه سوالات پاسخ داشته باشند
             await query.edit_message_text(
                 text=f"❌ شما فقط برای {len(correct_answers)} سوال از {total_questions} سوال پاسخ صحیح وارد کرده‌اید.\n"
-                     f"لطفاً پاسخ‌های صحیح باقی‌مانده را وارد کنید یا برای پرش از سوالات باقی‌مانده دوباره 'اتمام' را انتخاب کنید."
+                     f"لطفاً پاسخ‌های صحیح باقی‌مانده را وارد کنید."
             )
             return
         
