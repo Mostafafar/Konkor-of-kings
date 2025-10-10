@@ -1,7 +1,7 @@
 import os
 import logging
 import asyncio
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters
 import psycopg2
 from psycopg2 import sql
@@ -18,6 +18,9 @@ logger = logging.getLogger(__name__)
 
 # توکن ربات
 TOKEN = "8211286788:AAEf0nacvSZy7uXfUmcxNDkGquujQuvYzbE"
+
+# آیدی ادمین (جایگزین کنید با آیدی عددی خود)
+ADMIN_ID = 6680287530  # تغییر به آیدی عددی ادمین
 
 # تنظیمات دیتابیس
 DB_CONFIG = {
@@ -75,6 +78,19 @@ def init_db():
             )
         ''')
         
+        # ایجاد جدول برای آمار کاربران
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS user_stats (
+                user_id BIGINT PRIMARY KEY,
+                username TEXT,
+                first_name TEXT,
+                last_name TEXT,
+                exam_count INTEGER DEFAULT 0,
+                first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
         # بررسی و اضافه کردن ستون‌های جدید اگر وجود ندارند
         columns_to_add = [
             ('course_name', 'TEXT'),
@@ -124,19 +140,240 @@ def get_tehran_time():
     tehran_now = get_tehran_datetime()
     return tehran_now.strftime('%H:%M:%S')
 
+# ثبت یا به روزرسانی کاربر
+async def update_user_stats(user_data):
+    try:
+        conn = get_db_connection()
+        if conn is None:
+            return False
+            
+        cur = conn.cursor()
+        
+        cur.execute('''
+            INSERT INTO user_stats (user_id, username, first_name, last_name, last_seen, exam_count)
+            VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP, 0)
+            ON CONFLICT (user_id) 
+            DO UPDATE SET 
+                username = EXCLUDED.username,
+                first_name = EXCLUDED.first_name,
+                last_name = EXCLUDED.last_name,
+                last_seen = EXCLUDED.last_seen
+        ''', (
+            user_data['id'],
+            user_data.get('username'),
+            user_data.get('first_name'),
+            user_data.get('last_name')
+        ))
+        
+        conn.commit()
+        cur.close()
+        conn.close()
+        return True
+    except Exception as e:
+        logger.error(f"Error updating user stats: {e}")
+        return False
+
+# افزایش تعداد آزمون‌های کاربر
+async def increment_user_exam_count(user_id):
+    try:
+        conn = get_db_connection()
+        if conn is None:
+            return False
+            
+        cur = conn.cursor()
+        
+        cur.execute('''
+            UPDATE user_stats 
+            SET exam_count = exam_count + 1 
+            WHERE user_id = %s
+        ''', (user_id,))
+        
+        conn.commit()
+        cur.close()
+        conn.close()
+        return True
+    except Exception as e:
+        logger.error(f"Error incrementing user exam count: {e}")
+        return False
+
+# ارسال اطلاعات کاربر جدید به ادمین
+async def notify_admin_new_user(context: ContextTypes.DEFAULT_TYPE, user_data):
+    try:
+        user_info = f"""
+👤 کاربر جدید از بات استفاده کرد:
+
+🆔 آیدی: {user_data['id']}
+👤 نام: {user_data.get('first_name', 'نامعلوم')}
+📛 نام خانوادگی: {user_data.get('last_name', 'نامعلوم')}
+🔗 نام کاربری: @{user_data.get('username', 'نامعلوم')}
+📅 تاریخ: {get_jalali_date()}
+⏰ زمان: {get_tehran_time()}
+        """
+        
+        await context.bot.send_message(
+            chat_id=ADMIN_ID,
+            text=user_info
+        )
+    except Exception as e:
+        logger.error(f"Error notifying admin: {e}")
+
+# ارسال گزارش روزانه به ادمین
+async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
+    try:
+        conn = get_db_connection()
+        if conn is None:
+            return
+            
+        cur = conn.cursor()
+        
+        # تاریخ امروز
+        today = get_jalali_date()
+        
+        # تعداد آزمون‌های امروز
+        cur.execute(
+            "SELECT COUNT(*) FROM exams WHERE jalali_date = %s",
+            (today,)
+        )
+        today_exams = cur.fetchone()[0] or 0
+        
+        # تعداد کاربران فعال امروز
+        cur.execute(
+            "SELECT COUNT(DISTINCT user_id) FROM exams WHERE jalali_date = %s",
+            (today,)
+        )
+        active_users = cur.fetchone()[0] or 0
+        
+        # کل کاربران
+        cur.execute("SELECT COUNT(*) FROM user_stats")
+        total_users = cur.fetchone()[0] or 0
+        
+        # کاربران جدید امروز
+        cur.execute(
+            "SELECT COUNT(*) FROM user_stats WHERE DATE(first_seen) = DATE(CURRENT_TIMESTAMP)"
+        )
+        new_users = cur.fetchone()[0] or 0
+        
+        cur.close()
+        conn.close()
+        
+        report_text = f"""
+📊 گزارش روزانه بات آزمون‌ساز
+
+📅 تاریخ: {today}
+⏰ زمان: {get_tehran_time()}
+
+📈 آمار امروز:
+• 🎯 تعداد آزمون‌های ساخته شده: {today_exams}
+• 👥 کاربران فعال: {active_users}
+• 🆕 کاربران جدید: {new_users}
+
+📋 آمار کلی:
+• 👥 کل کاربران: {total_users}
+
+🎉 امروز یک روز پربار بود!
+        """
+        
+        await context.bot.send_message(
+            chat_id=ADMIN_ID,
+            text=report_text
+        )
+        
+    except Exception as e:
+        logger.error(f"Error sending daily report: {e}")
+
+# تنظیم منوی دستورات
+async def set_bot_commands(application: Application):
+    commands = [
+        BotCommand("start", "شروع مجدد ربات 🚀"),
+        BotCommand("new_exam", "ساخت پاسخبرگ جدید 📝"),
+        BotCommand("results", "مشاهده نتایج قبلی 📊"),
+        BotCommand("help", "راهنمای استفاده از ربات ❓")
+    ]
+    await application.bot.set_my_commands(commands)
+
 # مدیریت دستور start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    welcome_text = "🎯 بیایید پاسخبرگ بسازیم و رقابت کنیم!\n\nبرای شروع از دستور /new_exam استفاده کنید."
+    user = update.effective_user
+    user_id = user.id
+    
+    # ذخیره اطلاعات کاربر
+    user_data = {
+        'id': user_id,
+        'username': user.username,
+        'first_name': user.first_name,
+        'last_name': user.last_name
+    }
+    
+    # به روزرسانی آمار کاربر
+    await update_user_stats(user_data)
+    
+    # ارسال اطلاع به ادمین (فقط برای کاربران جدید)
+    if context.user_data.get('is_new_user', True):
+        await notify_admin_new_user(context, user_data)
+        context.user_data['is_new_user'] = False
+    
+    # متن زیبای خوش‌آمدگویی
+    welcome_text = """
+🎉 **به بات ساخت پاسخبرگ خوش آمدید!** 🎉
+
+📚 **ویژگی‌های بات:**
+• ✅ ساخت پاسخبرگ حرفه‌ای
+• ⏱️ زمان‌بندی آزمون
+• 📊 محاسبه نمره با نمره منفی
+• 💾 ذخیره نتایج
+• 📈 گزارش‌گیری پیشرفته
+
+🎯 **برای شروع آزمون جدید، روی دکمه زیر کلیک کنید:**
+    """
     
     # ایجاد کیبورد برای دسترسی آسان
     keyboard = [
-        [InlineKeyboardButton("📝 ساخت پاسخبرگ", callback_data="new_exam")],
-        [InlineKeyboardButton("📊 گزارش نتایج", callback_data="results")]
+        [InlineKeyboardButton("🎯 شروع آزمون جدید", callback_data="new_exam")],
+        [InlineKeyboardButton("📊 مشاهده نتایج قبلی", callback_data="results")],
+        [InlineKeyboardButton("ℹ️ راهنمای استفاده", callback_data="help")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await update.message.reply_text(welcome_text, reply_markup=reply_markup)
+    await update.message.reply_text(welcome_text, reply_markup=reply_markup, parse_mode='Markdown')
+
+# مدیریت دستور help
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    help_text = """
+📖 **راهنمای استفاده از بات**
+
+🎯 **دستورات اصلی:**
+• /start - شروع مجدد ربات
+• /new_exam - ساخت پاسخبرگ جدید
+• /results - مشاهده نتایج قبلی
+• /help - نمایش این راهنما
+
+📝 **مراحل ساخت آزمون:**
+1️⃣ وارد کردن نام درس
+2️⃣ وارد کردن نام مبحث
+3️⃣ مشخص کردن محدوده سوالات
+4️⃣ تعیین زمان آزمون (اختیاری)
+5️⃣ پاسخ‌دهی به سوالات
+6️⃣ وارد کردن پاسخ‌های صحیح
+7️⃣ دریافت نتایج و تحلیل
+
+⏰ **امکانات ویژه:**
+• تایمر هوشمند
+• صفحه‌بندی سوالات
+• محاسبه خودکار نمره
+• ذخیره تاریخچه
+• گزارش‌گیری دقیق
+
+💡 **نکته:** هر ۳ پاسخ اشتباه، معادل ۱ پاسخ صحیح نمره منفی دارد.
+    """
+    
+    keyboard = [
+        [InlineKeyboardButton("🎯 شروع آزمون جدید", callback_data="new_exam")],
+        [InlineKeyboardButton("📊 نتایج قبلی", callback_data="results")],
+        [InlineKeyboardButton("🏠 بازگشت به خانه", callback_data="start")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(help_text, reply_markup=reply_markup, parse_mode='Markdown')
 
 # مدیریت callback query برای دکمه‌ها
 async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -147,6 +384,10 @@ async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await new_exam(update, context)
     elif query.data == "results":
         await show_results(update, context)
+    elif query.data == "help":
+        await help_command(update, context)
+    elif query.data == "start":
+        await start(update, context)
 
 # ایجاد آزمون جدید
 async def new_exam(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -662,241 +903,371 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         if len(cleaned_text) != total_questions:
             await update.message.reply_text(
-                f"❌ رشته ارسالی باید شامل {total_questions} عدد باشد. شما {len(cleaned_text)} عدد وارد کردید. لطفاً مجدداً وارد کنید یا از دکمه‌های اینلاین استفاده کنید:"
+                f"❌ رشته ارسالی باید شامل {total_questions} عدد باشد. شما {len(cleaned_text)} عدد ارسال کرده‌اید.\n"
+                f"لطفاً مجدداً رشته عددی را وارد کنید:"
             )
             return
         
-        correct_answers = [int(char) for char in cleaned_text]
-        user_answers = exam_setup.get('answers', {})
-        correct_questions = []
-        wrong_questions = []
-        unanswered_questions = []
+        # ذخیره پاسخ‌های صحیح
+        correct_answers = {}
+        for i, answer in enumerate(cleaned_text):
+            question_num = exam_setup['start_question'] + i
+            correct_answers[str(question_num)] = int(answer)
         
-        start_q = exam_setup.get('start_question')
-        end_q = exam_setup.get('end_question')
-        
-        for i in range(start_q, end_q + 1):
-            user_answer = user_answers.get(str(i))
-            correct_answer = correct_answers[i - start_q]
-            
-            if user_answer is None:
-                unanswered_questions.append(i)
-            elif user_answer == correct_answer:
-                correct_questions.append(i)
-            else:
-                wrong_questions.append(i)
+        exam_setup['correct_answers'] = correct_answers
+        context.user_data['exam_setup'] = exam_setup
         
         # محاسبه نتایج
-        correct_count = len(correct_questions)
-        wrong_count = len(wrong_questions)
-        unanswered_count = len(unanswered_questions)
+        await calculate_results(update, context)
 
-        # درصد بدون نمره منفی
-        percentage_without_penalty = (correct_count / total_questions) * 100 if total_questions > 0 else 0
+# محاسبه نتایج آزمون
+async def calculate_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    exam_setup = context.user_data['exam_setup']
+    user_answers = exam_setup.get('answers', {})
+    correct_answers = exam_setup.get('correct_answers', {})
+    
+    # محاسبه آمار
+    correct_count = 0
+    wrong_count = 0
+    unanswered_count = 0
+    wrong_questions = []
+    unanswered_questions = []
+    
+    for question_num in range(exam_setup['start_question'], exam_setup['end_question'] + 1):
+        str_question_num = str(question_num)
+        user_answer = user_answers.get(str_question_num)
+        correct_answer = correct_answers.get(str_question_num)
+        
+        if user_answer is None:
+            unanswered_count += 1
+            unanswered_questions.append(question_num)
+        elif user_answer == correct_answer:
+            correct_count += 1
+        else:
+            wrong_count += 1
+            wrong_questions.append(question_num)
+    
+    # محاسبه نمره (هر ۳ غلط = ۱ نمره منفی)
+    score = max(0, correct_count - (wrong_count // 3))
+    
+    # ذخیره نتایج
+    exam_setup['score'] = score
+    exam_setup['correct_count'] = correct_count
+    exam_setup['wrong_count'] = wrong_count
+    exam_setup['unanswered_count'] = unanswered_count
+    exam_setup['wrong_questions'] = wrong_questions
+    exam_setup['unanswered_questions'] = unanswered_questions
+    
+    # ذخیره در دیتابیس
+    await save_exam_to_db(update.effective_user.id, exam_setup)
+    
+    # نمایش نتایج
+    await show_results_message(update, context, exam_setup)
 
-        # محاسبه نمره منفی
-        raw_score = correct_count
-        penalty = wrong_count / 3.0  # کسر ⅓ نمره به ازای هر پاسخ اشتباه
-        final_score = max(0, raw_score - penalty)
-        final_percentage = (final_score / total_questions) * 100 if total_questions > 0 else 0
-
-        # محاسبه زمان صرف شده
-        elapsed_time = calculate_elapsed_time(exam_setup.get('start_time'))
+# ذخیره آزمون در دیتابیس
+async def save_exam_to_db(user_id: int, exam_setup: dict):
+    try:
+        conn = get_db_connection()
+        if conn is None:
+            return False
+            
+        cur = conn.cursor()
+        
+        # تبدیل داده‌ها به فرمت مناسب
+        answers_str = str(exam_setup.get('answers', {}))
+        correct_answers_str = str(exam_setup.get('correct_answers', {}))
+        wrong_questions_str = str(exam_setup.get('wrong_questions', []))
+        unanswered_questions_str = str(exam_setup.get('unanswered_questions', []))
         
         # دریافت تاریخ و زمان تهران
         jalali_date = get_jalali_date()
         tehran_time = get_tehran_time()
         
-        # ذخیره نتایج در دیتابیس
-        saved_to_db = False
-        try:
-            conn = get_db_connection()
-            if conn:
-                cur = conn.cursor()
-                
-                cur.execute(
-                    """
-                    INSERT INTO exams 
-                    (user_id, course_name, topic_name, start_question, end_question, total_questions, 
-                     exam_duration, elapsed_time, answers, correct_answers, score, wrong_questions, 
-                     unanswered_questions, jalali_date, tehran_time)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    """,
-                    (
-                        user_id,
-                        exam_setup.get('course_name'),
-                        exam_setup.get('topic_name'),
-                        exam_setup.get('start_question'),
-                        exam_setup.get('end_question'),
-                        total_questions,
-                        exam_setup.get('exam_duration'),
-                        elapsed_time,
-                        str(user_answers),
-                        cleaned_text,
-                        final_percentage,
-                        str(wrong_questions),
-                        str(unanswered_questions),
-                        jalali_date,
-                        tehran_time
-                    )
-                )
-                conn.commit()
-                cur.close()
-                conn.close()
-                saved_to_db = True
-        except Exception as e:
-            logger.error(f"Error saving to database: {e}")
-
-        course_name = exam_setup.get('course_name', 'نامعلوم')
-        topic_name = exam_setup.get('topic_name', 'نامعلوم')
+        cur.execute('''
+            INSERT INTO exams 
+            (user_id, course_name, topic_name, start_question, end_question, total_questions,
+             exam_duration, elapsed_time, answers, correct_answers, score, wrong_questions, 
+             unanswered_questions, jalali_date, tehran_time)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ''', (
+            user_id,
+            exam_setup.get('course_name'),
+            exam_setup.get('topic_name'),
+            exam_setup.get('start_question'),
+            exam_setup.get('end_question'),
+            exam_setup.get('total_questions'),
+            exam_setup.get('exam_duration', 0),
+            exam_setup.get('elapsed_time', 0),
+            answers_str,
+            correct_answers_str,
+            exam_setup.get('score', 0),
+            wrong_questions_str,
+            unanswered_questions_str,
+            jalali_date,
+            tehran_time
+        ))
         
-        # ارسال نتایج
-        result_text = f"""
-📊 نتایج آزمون شما:
-
-📚 درس: {course_name}
-📖 مبحث: {topic_name}
-📅 تاریخ: {jalali_date}
-⏰ زمان: {tehran_time}
-
-✅ تعداد پاسخ صحیح: {correct_count}
-❌ تعداد پاسخ اشتباه: {wrong_count}
-⏸️ تعداد بی‌پاسخ: {unanswered_count}
-📝 تعداد کل سوالات: {total_questions}
-⏰ زمان صرف شده: {elapsed_time:.2f} دقیقه
-
-📈 درصد بدون نمره منفی: {percentage_without_penalty:.2f}%
-📉 درصد با نمره منفی: {final_percentage:.2f}%
-
-🔢 سوالات صحیح: {', '.join(map(str, correct_questions)) if correct_questions else 'ندارد'}
-🔢 سوالات غلط: {', '.join(map(str, wrong_questions)) if wrong_questions else 'ندارد'}
-🔢 سوالات بی‌پاسخ: {', '.join(map(str, unanswered_questions)) if unanswered_questions else 'ندارد'}
-
-💡 نکته: هر ۳ پاسخ اشتباه، معادل ۱ پاسخ صحیح نمره منفی دارد.
-"""
-
-        if not saved_to_db:
-            result_text += "\n\n⚠️ نتایج در پایگاه داده ذخیره نشد (مشکل اتصال)."
-
-        await update.message.reply_text(result_text)
+        conn.commit()
+        cur.close()
+        conn.close()
         
-        # پاک کردن وضعیت آزمون و تایمر
-        context.user_data.pop('exam_setup', None)
-        if 'user_exams' in context.bot_data and user_id in context.bot_data['user_exams']:
-            # آنپین کردن پیام تایمر
-            exam_setup = context.bot_data['user_exams'][user_id]
-            if 'timer_message_id' in exam_setup:
-                try:
-                    await context.bot.unpin_chat_message(
-                        chat_id=user_id,
-                        message_id=exam_setup['timer_message_id']
-                    )
-                except:
-                    pass
-            context.bot_data['user_exams'].pop(user_id, None)
+        # افزایش تعداد آزمون‌های کاربر
+        await increment_user_exam_count(user_id)
         
-        job_name = f"timer_{user_id}"
-        current_jobs = context.job_queue.get_jobs_by_name(job_name)
-        for job in current_jobs:
-            job.schedule_removal()
+        logger.info(f"Exam saved for user {user_id}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error saving exam to database: {e}")
+        return False
 
-# مدیریت پاسخ‌های اینلاین
-# مدیریت پاسخ‌های اینلاین
-async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# نمایش پیام نتایج
+async def show_results_message(update: Update, context: ContextTypes.DEFAULT_TYPE, exam_setup: dict):
+    user_id = update.effective_user.id
+    
+    # ایجاد متن نتایج
+    results_text = f"""
+🎉 **نتایج آزمون شما** 🎉
+
+📚 **درس:** {exam_setup.get('course_name', 'نامعلوم')}
+📖 **مبحث:** {exam_setup.get('topic_name', 'نامعلوم')}
+📊 **تعداد سوالات:** {exam_setup.get('total_questions')}
+
+✅ **پاسخ‌های صحیح:** {exam_setup.get('correct_count')}
+❌ **پاسخ‌های غلط:** {exam_setup.get('wrong_count')}
+⏭️ **پاسخ نداده:** {exam_setup.get('unanswered_count')}
+
+🎯 **نمره نهایی:** {exam_setup.get('score')} از {exam_setup.get('total_questions')}
+
+⏰ **زمان صرف شده:** {exam_setup.get('elapsed_time', 0):.1f} دقیقه
+📅 **تاریخ:** {get_jalali_date()}
+🕒 **ساعت:** {get_tehran_time()}
+    """
+    
+    # ایجاد دکمه‌های پایین صفحه
+    keyboard = [
+        [InlineKeyboardButton("📝 آزمون جدید", callback_data="new_exam")],
+        [InlineKeyboardButton("📊 نتایج قبلی", callback_data="results")],
+        [InlineKeyboardButton("🏠 صفحه اصلی", callback_data="start")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    # ارسال پیام نتایج
+    if update.callback_query:
+        await update.callback_query.message.reply_text(results_text, reply_markup=reply_markup, parse_mode='Markdown')
+    else:
+        await context.bot.send_message(user_id, results_text, reply_markup=reply_markup, parse_mode='Markdown')
+
+# نمایش نتایج قبلی
+async def show_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    try:
+        conn = get_db_connection()
+        if conn is None:
+            await update.message.reply_text("❌ خطا در اتصال به دیتابیس.")
+            return
+            
+        cur = conn.cursor()
+        
+        # دریافت ۱۰ آزمون آخر کاربر
+        cur.execute('''
+            SELECT course_name, topic_name, score, total_questions, jalali_date, tehran_time
+            FROM exams 
+            WHERE user_id = %s 
+            ORDER BY created_at DESC 
+            LIMIT 10
+        ''', (user_id,))
+        
+        exams = cur.fetchall()
+        cur.close()
+        conn.close()
+        
+        if not exams:
+            if update.callback_query:
+                await update.callback_query.message.reply_text("📭 هیچ آزمونی ثبت نشده است.")
+            else:
+                await update.message.reply_text("📭 هیچ آزمونی ثبت نشده است.")
+            return
+        
+        # ایجاد متن نتایج
+        results_text = "📊 **نتایج آزمون‌های قبلی شما:**\n\n"
+        
+        for i, exam in enumerate(exams, 1):
+            course_name, topic_name, score, total_questions, jalali_date, tehran_time = exam
+            results_text += f"{i}. **{course_name}** - {topic_name}\n"
+            results_text += f"   🎯 نمره: {score}/{total_questions}\n"
+            results_text += f"   📅 {jalali_date} - 🕒 {tehran_time}\n\n"
+        
+        # ایجاد دکمه‌های پایین صفحه
+        keyboard = [
+            [InlineKeyboardButton("📝 آزمون جدید", callback_data="new_exam")],
+            [InlineKeyboardButton("🏠 صفحه اصلی", callback_data="start")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        if update.callback_query:
+            await update.callback_query.message.reply_text(results_text, reply_markup=reply_markup, parse_mode='Markdown')
+        else:
+            await update.message.reply_text(results_text, reply_markup=reply_markup, parse_mode='Markdown')
+            
+    except Exception as e:
+        logger.error(f"Error fetching results: {e}")
+        error_text = "❌ خطا در دریافت نتایج. لطفاً بعداً تلاش کنید."
+        if update.callback_query:
+            await update.callback_query.message.reply_text(error_text)
+        else:
+            await update.message.reply_text(error_text)
+
+# مدیریت کلیک روی دکمه‌های اینلاین
+async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
     data = query.data
     user_id = query.from_user.id
     
+    # دکمه‌های نادیده گرفته شده
     if data == "ignore":
         return
     
-    if 'exam_setup' not in context.user_data:
-        await query.edit_message_text("⚠️ لطفا ابتدا با /new_exam یک آزمون جدید شروع کنید.")
-        return
-        
-    exam_setup = context.user_data['exam_setup']
+    # مدیریت دکمه‌های پاسخ‌دهی
+    elif data.startswith("ans_"):
+        await handle_answer_selection(update, context, data)
     
-    if data.startswith("ans_"):
-        parts = data.split("_")
-        question_num = int(parts[1])
-        answer = int(parts[2])
-        
-        # بررسی آیا این گزینه قبلاً انتخاب شده است
-        current_answer = exam_setup['answers'].get(str(question_num))
-        
-        if current_answer == answer:
-            # اگر گزینه قبلاً انتخاب شده بود، آن را بردار (تیک را حذف کن)
-            del exam_setup['answers'][str(question_num)]
-        else:
-            # اگر گزینه جدید است، آن را ثبت کن
-            exam_setup['answers'][str(question_num)] = answer
-        
-        context.user_data['exam_setup'] = exam_setup
-        
-        # به روزرسانی در bot_data نیز
-        if 'user_exams' in context.bot_data and user_id in context.bot_data['user_exams']:
-            context.bot_data['user_exams'][user_id] = exam_setup
-        
-        # نمایش مجدد صفحه فعلی با پاسخ به روز شده
-        current_page = exam_setup.get('current_page', 1)
-        await show_questions_page(update, context, current_page)
-    
+    # مدیریت دکمه‌های پاسخ صحیح
     elif data.startswith("correct_ans_"):
-        parts = data.split("_")
-        question_num = int(parts[2])
-        answer = int(parts[3])
-        
-        # بررسی آیا این گزینه قبلاً انتخاب شده است
-        current_answer = exam_setup['correct_answers'].get(str(question_num))
-        
-        if current_answer == answer:
-            # اگر گزینه قبلاً انتخاب شده بود، آن را بردار (تیک را حذف کن)
-            del exam_setup['correct_answers'][str(question_num)]
-        else:
-            # اگر گزینه جدید است، آن را ثبت کن
-            exam_setup['correct_answers'][str(question_num)] = answer
-        
-        context.user_data['exam_setup'] = exam_setup
-        
-        # به روزرسانی در bot_data نیز
-        if 'user_exams' in context.bot_data and user_id in context.bot_data['user_exams']:
-            context.bot_data['user_exams'][user_id] = exam_setup
-        
-        # نمایش مجدد صفحه فعلی پاسخ‌های صحیح
-        current_page = exam_setup.get('correct_answers_page', 1)
-        await show_correct_answers_page(update, context, current_page)
+        await handle_correct_answer_selection(update, context, data)
     
+    # مدیریت صفحات
     elif data.startswith("page_"):
-        # تغییر صفحه سوالات کاربر
         page = int(data.split("_")[1])
         await show_questions_page(update, context, page)
     
+    # مدیریت صفحات پاسخ صحیح
     elif data.startswith("correct_page_"):
-        # تغییر صفحه پاسخ‌های صحیح
         page = int(data.split("_")[2])
         await show_correct_answers_page(update, context, page)
     
+    # اتمام آزمون
     elif data == "finish_exam":
-        exam_setup['step'] = 'waiting_for_correct_answers_inline'
+        await finish_exam_manual(update, context)
+    
+    # اتمام وارد کردن پاسخ‌های صحیح
+    elif data == "finish_correct_answers":
+        await finish_correct_answers(update, context)
+    
+    # تغییر به حالت متنی برای وارد کردن پاسخ‌ها
+    elif data == "switch_to_text_input":
+        await switch_to_text_input(update, context)
+
+# مدیریت انتخاب پاسخ توسط کاربر
+async def handle_answer_selection(update: Update, context: ContextTypes.DEFAULT_TYPE, data: str):
+    user_id = update.effective_user.id
+    
+    if 'exam_setup' not in context.user_data:
+        await update.callback_query.message.reply_text("❌ خطا در دریافت اطلاعات آزمون.")
+        return
+    
+    exam_setup = context.user_data['exam_setup']
+    
+    if exam_setup.get('step') != 4:
+        await update.callback_query.message.reply_text("❌ آزمون فعالی وجود ندارد.")
+        return
+    
+    # استخراج اطلاعات از دیتا
+    parts = data.split("_")
+    question_num = int(parts[2])
+    selected_answer = int(parts[3])
+    
+    # ذخیره پاسخ کاربر
+    if 'answers' not in exam_setup:
+        exam_setup['answers'] = {}
+    
+    exam_setup['answers'][str(question_num)] = selected_answer
+    context.user_data['exam_setup'] = exam_setup
+    
+    # به روزرسانی صفحه فعلی
+    current_page = exam_setup.get('current_page', 1)
+    await show_questions_page(update, context, current_page)
+
+# مدیریت انتخاب پاسخ صحیح
+async def handle_correct_answer_selection(update: Update, context: ContextTypes.DEFAULT_TYPE, data: str):
+    user_id = update.effective_user.id
+    
+    if 'exam_setup' not in context.user_data:
+        await update.callback_query.message.reply_text("❌ خطا در دریافت اطلاعات آزمون.")
+        return
+    
+    exam_setup = context.user_data['exam_setup']
+    
+    if exam_setup.get('step') != 'waiting_for_correct_answers_inline':
+        await update.callback_query.message.reply_text("❌ مرحله وارد کردن پاسخ‌های صحیح فعال نیست.")
+        return
+    
+    # استخراج اطلاعات از دیتا
+    parts = data.split("_")
+    question_num = int(parts[2])
+    correct_answer = int(parts[3])
+    
+    # ذخیره پاسخ صحیح
+    if 'correct_answers' not in exam_setup:
         exam_setup['correct_answers'] = {}
-        context.user_data['exam_setup'] = exam_setup
+    
+    exam_setup['correct_answers'][str(question_num)] = correct_answer
+    context.user_data['exam_setup'] = exam_setup
+    
+    # به روزرسانی صفحه فعلی
+    current_page = exam_setup.get('correct_answers_page', 1)
+    await show_correct_answers_page(update, context, current_page)
+
+# اتمام دستی آزمون توسط کاربر
+async def finish_exam_manual(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    if 'exam_setup' not in context.user_data:
+        await update.callback_query.message.reply_text("❌ آزمون فعالی وجود ندارد.")
+        return
+    
+    exam_setup = context.user_data['exam_setup']
+    
+    if exam_setup.get('step') != 4:
+        await update.callback_query.message.reply_text("❌ آزمون فعالی وجود ندارد.")
+        return
+    
+    # تغییر وضعیت به انتظار برای پاسخ‌های صحیح
+    exam_setup['step'] = 'waiting_for_correct_answers_inline'
+    exam_setup['correct_answers'] = {}
+    context.user_data['exam_setup'] = exam_setup
+    
+    # محاسبه زمان صرف شده
+    start_time = exam_setup.get('start_time')
+    elapsed_time = calculate_elapsed_time(start_time)
+    exam_setup['elapsed_time'] = elapsed_time
+    
+    # حذف job تایمر
+    job_name = f"timer_{user_id}"
+    current_jobs = context.job_queue.get_jobs_by_name(job_name)
+    for job in current_jobs:
+        job.schedule_removal()
+    
+    total_questions = exam_setup.get('total_questions')
+    answered_count = len(exam_setup.get('answers', {}))
+    
+    course_name = exam_setup.get('course_name', 'نامعلوم')
+    topic_name = exam_setup.get('topic_name', 'نامعلوم')
+    
+    # ارسال پیام تأیید
+    try:
+        message = await update.callback_query.message.reply_text(
+            f"📚 {course_name} - {topic_name}\n"
+            f"✅ آزمون با موفقیت به پایان رسید!\n"
+            f"📊 شما به {answered_count} از {total_questions} سوال پاسخ داده‌اید.\n\n"
+            f"لطفاً پاسخ‌های صحیح را با استفاده از دکمه‌های زیر وارد کنید:"
+        )
         
-        # محاسبه زمان صرف شده
-        start_time = exam_setup.get('start_time')
-        elapsed_time = calculate_elapsed_time(start_time)
-        exam_setup['elapsed_time'] = elapsed_time
-        
-        # به روزرسانی در bot_data نیز
-        if 'user_exams' in context.bot_data and user_id in context.bot_data['user_exams']:
-            context.bot_data['user_exams'][user_id] = exam_setup
-        
-        # حذف تایمر
-        job_name = f"timer_{user_id}"
-        current_jobs = context.job_queue.get_jobs_by_name(job_name)
-        for job in current_jobs:
-            job.schedule_removal()
+        # نمایش اولین صفحه پاسخ‌های صحیح
+        await show_correct_answers_page(update, context, page=1)
         
         # آنپین کردن پیام تایمر
         if 'timer_message_id' in exam_setup:
@@ -905,262 +1276,94 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     chat_id=user_id,
                     message_id=exam_setup['timer_message_id']
                 )
-            except Exception as e:
-                logger.error(f"Error unpinning timer message: {e}")
-        
-        total_questions = exam_setup.get('total_questions')
-        answered_count = len(exam_setup.get('answers', {}))
-        
-        course_name = exam_setup.get('course_name', 'نامعلوم')
-        topic_name = exam_setup.get('topic_name', 'نامعلوم')
-        
-        await query.edit_message_text(
-            text=f"📚 {course_name} - {topic_name}\n"
-                 f"📝 آزمون به پایان رسید.\n"
-                 f"⏰ زمان صرف شده: {elapsed_time:.2f} دقیقه\n"
-                 f"📊 شما به {answered_count} از {total_questions} سوال پاسخ داده‌اید.\n\n"
-                 f"لطفاً پاسخ‌های صحیح را با استفاده از دکمه‌های زیر وارد کنید:"
-        )
-        
-        # نمایش اولین صفحه پاسخ‌های صحیح
-        await show_correct_answers_page(update, context, page=1)
-    
-    elif data == "finish_correct_answers":
-        total_questions = exam_setup.get('total_questions')
-        correct_answers = exam_setup.get('correct_answers', {})
-        
-        if len(correct_answers) != total_questions:
-            # این حالت نباید اتفاق بیفتد چون دکمه فقط زمانی فعال می‌شود که همه سوالات پاسخ داشته باشند
-            await query.edit_message_text(
-                text=f"❌ شما فقط برای {len(correct_answers)} سوال از {total_questions} سوال پاسخ صحیح وارد کرده‌اید.\n"
-                     f"لطفاً پاسخ‌های صحیح باقی‌مانده را وارد کنید."
-            )
-            return
-        
-        user_answers = exam_setup.get('answers', {})
-        correct_questions = []
-        wrong_questions = []
-        unanswered_questions = []
-        
-        start_q = exam_setup.get('start_question')
-        end_q = exam_setup.get('end_question')
-        
-        # تبدیل پاسخ‌های صحیح به رشته برای ذخیره در دیتابیس
-        correct_answers_list = []
-        for i in range(start_q, end_q + 1):
-            correct_answer = correct_answers.get(str(i))
-            if correct_answer is None:
-                correct_answers_list.append('0')  # صفر برای سوالات بدون پاسخ صحیح
-            else:
-                correct_answers_list.append(str(correct_answer))
-            
-            user_answer = user_answers.get(str(i))
-            if user_answer is None:
-                unanswered_questions.append(i)
-            elif user_answer == correct_answer:
-                correct_questions.append(i)
-            else:
-                wrong_questions.append(i)
-        
-        correct_answers_str = ''.join(correct_answers_list)
-        
-        # محاسبه نتایج
-        correct_count = len(correct_questions)
-        wrong_count = len(wrong_questions)
-        unanswered_count = len(unanswered_questions)
-
-        # درصد بدون نمره منفی
-        percentage_without_penalty = (correct_count / total_questions) * 100 if total_questions > 0 else 0
-
-        # محاسبه نمره منفی
-        raw_score = correct_count
-        penalty = wrong_count / 3.0  # کسر ⅓ نمره به ازای هر پاسخ اشتباه
-        final_score = max(0, raw_score - penalty)
-        final_percentage = (final_score / total_questions) * 100 if total_questions > 0 else 0
-
-        # محاسبه زمان صرف شده
-        elapsed_time = exam_setup.get('elapsed_time', 0)
-        
-        # دریافت تاریخ و زمان تهران
-        jalali_date = get_jalali_date()
-        tehran_time = get_tehran_time()
-        
-        # ذخیره نتایج در دیتابیس
-        saved_to_db = False
-        try:
-            conn = get_db_connection()
-            if conn:
-                cur = conn.cursor()
-                
-                cur.execute(
-                    """
-                    INSERT INTO exams 
-                    (user_id, course_name, topic_name, start_question, end_question, total_questions, 
-                     exam_duration, elapsed_time, answers, correct_answers, score, wrong_questions, 
-                     unanswered_questions, jalali_date, tehran_time)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    """,
-                    (
-                        user_id,
-                        exam_setup.get('course_name'),
-                        exam_setup.get('topic_name'),
-                        exam_setup.get('start_question'),
-                        exam_setup.get('end_question'),
-                        total_questions,
-                        exam_setup.get('exam_duration'),
-                        elapsed_time,
-                        str(user_answers),
-                        correct_answers_str,
-                        final_percentage,
-                        str(wrong_questions),
-                        str(unanswered_questions),
-                        jalali_date,
-                        tehran_time
-                    )
-                )
-                conn.commit()
-                cur.close()
-                conn.close()
-                saved_to_db = True
-        except Exception as e:
-            logger.error(f"Error saving to database: {e}")
-
-        course_name = exam_setup.get('course_name', 'نامعلوم')
-        topic_name = exam_setup.get('topic_name', 'نامعلوم')
-        
-        # ارسال نتایج
-        result_text = f"""
-📊 نتایج آزمون شما:
-
-📚 درس: {course_name}
-📖 مبحث: {topic_name}
-📅 تاریخ: {jalali_date}
-⏰ زمان: {tehran_time}
-
-✅ تعداد پاسخ صحیح: {correct_count}
-❌ تعداد پاسخ اشتباه: {wrong_count}
-⏸️ تعداد بی‌پاسخ: {unanswered_count}
-📝 تعداد کل سوالات: {total_questions}
-⏰ زمان صرف شده: {elapsed_time:.2f} دقیقه
-
-📈 درصد بدون نمره منفی: {percentage_without_penalty:.2f}%
-📉 درصد با نمره منفی: {final_percentage:.2f}%
-
-🔢 سوالات صحیح: {', '.join(map(str, correct_questions)) if correct_questions else 'ندارد'}
-🔢 سوالات غلط: {', '.join(map(str, wrong_questions)) if wrong_questions else 'ندارد'}
-🔢 سوالات بی‌پاسخ: {', '.join(map(str, unanswered_questions)) if unanswered_questions else 'ندارد'}
-
-💡 نکته: هر ۳ پاسخ اشتباه، معادل ۱ پاسخ صحیح نمره منفی دارد.
-"""
-
-        if not saved_to_db:
-            result_text += "\n\n⚠️ نتایج در پایگاه داده ذخیره نشد (مشکل اتصال)."
-
-        await query.edit_message_text(result_text)
-        
-        # پاک کردن وضعیت آزمون و تایمر
-        context.user_data.pop('exam_setup', None)
-        if 'user_exams' in context.bot_data and user_id in context.bot_data['user_exams']:
-            # آنپین کردن پیام تایمر
-            exam_setup = context.bot_data['user_exams'][user_id]
-            if 'timer_message_id' in exam_setup:
-                try:
-                    await context.bot.unpin_chat_message(
-                        chat_id=user_id,
-                        message_id=exam_setup['timer_message_id']
-                    )
-                except:
-                    pass
-            context.bot_data['user_exams'].pop(user_id, None)
-        
-        job_name = f"timer_{user_id}"
-        current_jobs = context.job_queue.get_jobs_by_name(job_name)
-        for job in current_jobs:
-            job.schedule_removal()
-    
-    elif data == "switch_to_text_input":
-        # تغییر به حالت وارد کردن رشته عددی
-        exam_setup['step'] = 'waiting_for_correct_answers'
-        context.user_data['exam_setup'] = exam_setup
-        
-        total_questions = exam_setup.get('total_questions')
-        
-        await query.edit_message_text(
-            text=f"🔢 لطفاً پاسخ‌های صحیح را به صورت یک رشته عددی با {total_questions} رقم وارد کنید:\n\n"
-                 f"📝 مثال: برای ۵ سوال: 12345\n"
-                 f"💡 نکته: برای سوالات بی‌پاسخ از 0 استفاده کنید."
-        )
-# مشاهده نتایج قبلی
-async def show_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    
-    try:
-        conn = get_db_connection()
-        if conn is None:
-            await update.message.reply_text("⚠️ در حال حاضر امکان دسترسی به تاریخچه نتایج وجود ندارد.")
-            return
-            
-        cur = conn.cursor()
-        
-        cur.execute(
-            "SELECT course_name, topic_name, created_at, score, start_question, end_question, exam_duration, elapsed_time, jalali_date, tehran_time FROM exams WHERE user_id = %s ORDER BY created_at DESC LIMIT 5",
-            (user_id,)
-        )
-        
-        results = cur.fetchall()
-        cur.close()
-        conn.close()
-        
-        if results:
-            result_text = "📋 آخرین نتایج آزمون‌های شما:\n\n"
-            for i, result in enumerate(results, 1):
-                try:
-                    course_name, topic_name, date, score, start_q, end_q, duration, elapsed, jalali_date, tehran_time = result
-                    
-                    # بررسی مقادیر None
-                    duration = duration or 0
-                    elapsed = elapsed or 0
-                    score = score or 0
-                    start_q = start_q or 0
-                    end_q = end_q or 0
-                    course_name = course_name or 'نامعلوم'
-                    topic_name = topic_name or 'نامعلوم'
-                    jalali_date = jalali_date or 'نامعلوم'
-                    tehran_time = tehran_time or 'نامعلوم'
-                    
-                    time_text = f"{elapsed:.1f} دقیقه از {duration} دقیقه" if duration and duration > 0 else f"{elapsed:.1f} دقیقه"
-                    
-                    result_text += f"{i}. {course_name} - {topic_name}\n"
-                    result_text += f"   سوالات {start_q}-{end_q} - زمان: {time_text}\n"
-                    result_text += f"   نمره: {score:.2f}% - تاریخ: {jalali_date} {tehran_time}\n\n"
-                
-                except Exception as e:
-                    logger.error(f"Error processing result {i}: {e}")
-                    result_text += f"{i}. خطا در پردازش نتیجه\n\n"
-        else:
-            result_text = "📭 هیچ نتیجه‌ای برای نمایش وجود ندارد."
+            except:
+                pass
             
     except Exception as e:
-        logger.error(f"Error retrieving results: {e}")
-        result_text = "⚠️ خطایی در دریافت نتایج رخ داد."
+        logger.error(f"Error sending manual finish message: {e}")
+
+# اتمام وارد کردن پاسخ‌های صحیح
+async def finish_correct_answers(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
     
-    await update.message.reply_text(result_text)
+    if 'exam_setup' not in context.user_data:
+        await update.callback_query.message.reply_text("❌ خطا در دریافت اطلاعات آزمون.")
+        return
+    
+    exam_setup = context.user_data['exam_setup']
+    
+    if exam_setup.get('step') != 'waiting_for_correct_answers_inline':
+        await update.callback_query.message.reply_text("❌ مرحله وارد کردن پاسخ‌های صحیح فعال نیست.")
+        return
+    
+    # بررسی اینکه آیا برای همه سوالات پاسخ صحیح وارد شده است
+    total_questions = exam_setup.get('total_questions')
+    correct_answers_count = len(exam_setup.get('correct_answers', {}))
+    
+    if correct_answers_count != total_questions:
+        await update.callback_query.answer(
+            f"❌ لطفاً برای همه {total_questions} سوال پاسخ صحیح وارد کنید. ({correct_answers_count}/{total_questions})",
+            show_alert=True
+        )
+        return
+    
+    # محاسبه نتایج
+    await calculate_results(update, context)
+
+# تغییر به حالت متنی برای وارد کردن پاسخ‌ها
+async def switch_to_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    if 'exam_setup' not in context.user_data:
+        await update.callback_query.message.reply_text("❌ خطا در دریافت اطلاعات آزمون.")
+        return
+    
+    exam_setup = context.user_data['exam_setup']
+    exam_setup['step'] = 'waiting_for_correct_answers'
+    context.user_data['exam_setup'] = exam_setup
+    
+    total_questions = exam_setup.get('total_questions')
+    
+    await update.callback_query.message.reply_text(
+        f"🔢 لطفاً پاسخ‌های صحیح را به صورت یک رشته {total_questions} رقمی وارد کنید:\n\n"
+        f"مثال: برای ۵ سوال با پاسخ‌های ۱، ۲، ۳، ۴، ۱ وارد کنید:\n"
+        f"`12341`"
+    )
 
 # تابع اصلی
 def main():
-    if not init_db():
-        logger.warning("Database initialization failed. The bot will work without database support.")
-    
+    # ایجاد اپلیکیشن
     application = Application.builder().token(TOKEN).build()
     
+    # راه‌اندازی دیتابیس
+    if not init_db():
+        logger.error("Failed to initialize database. Exiting.")
+        return
+    
+    # افزودن هندلرها
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("new_exam", new_exam))
     application.add_handler(CommandHandler("results", show_results))
-    application.add_handler(CallbackQueryHandler(handle_button, pattern="^(new_exam|results)$"))
-    application.add_handler(CallbackQueryHandler(handle_answer, pattern="^(ans_|correct_ans_|page_|correct_page_|finish_exam|finish_correct_answers|switch_to_text_input|ignore)"))
+    application.add_handler(CommandHandler("help", help_command))
+    
+    application.add_handler(CallbackQueryHandler(handle_button, pattern="^(new_exam|results|help|start)$"))
+    application.add_handler(CallbackQueryHandler(handle_callback_query))
+    
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
-    logger.info("Bot started with pagination and inline correct answers feature...")
+    # تنظیم منوی دستورات
+    application.post_init = set_bot_commands
+    
+    # تنظیم job برای گزارش روزانه (هر شب ساعت ۲۳:۵۹)
+    application.job_queue.run_daily(
+        send_daily_report,
+        time=datetime.strptime("23:59", "%H:%M").time(),
+        days=(0, 1, 2, 3, 4, 5, 6),
+        name="daily_report"
+    )
+    
+    # شروع بات
+    logger.info("Bot is starting...")
     application.run_polling()
 
 if __name__ == "__main__":
