@@ -735,7 +735,29 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # بررسی لغو عملیات
     if text == "❌ لغو":
+        # پاک کردن وضعیت آزمون
         context.user_data.pop('exam_setup', None)
+        
+        # حذف تایمر اگر فعال است
+        job_name = f"timer_{user_id}"
+        current_jobs = context.job_queue.get_jobs_by_name(job_name)
+        for job in current_jobs:
+            job.schedule_removal()
+        
+        # آنپین کردن پیام تایمر اگر وجود دارد
+        if 'user_exams' in context.bot_data and user_id in context.bot_data['user_exams']:
+            exam_setup = context.bot_data['user_exams'][user_id]
+            if 'timer_message_id' in exam_setup:
+                try:
+                    await context.bot.unpin_chat_message(
+                        chat_id=user_id,
+                        message_id=exam_setup['timer_message_id']
+                    )
+                except Exception as e:
+                    logger.error(f"Error unpinning timer message during cancel: {e}")
+            # پاک کردن از bot_data
+            context.bot_data['user_exams'].pop(user_id, None)
+        
         await update.message.reply_text(
             "✅ عملیات لغو شد.",
             reply_markup=get_main_keyboard()
