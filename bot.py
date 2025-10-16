@@ -540,6 +540,20 @@ async def show_questions_page(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def show_correct_answers_page(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 1):
     """نمایش سوالات برای وارد کردن پاسخ‌های صحیح"""
+    # *** اضافه کردن این چک ***
+    if 'exam_setup' not in context.user_data:
+        if update.callback_query:
+            await update.callback_query.message.reply_text(
+                "⚠️ لطفا ابتدا یک آزمون جدید شروع کنید.",
+                reply_markup=get_main_keyboard()
+            )
+        else:
+            await update.message.reply_text(
+                "⚠️ لطفا ابتدا یک آزمون جدید شروع کنید.",
+                reply_markup=get_main_keyboard()
+            )
+        return
+    
     exam_setup = context.user_data['exam_setup']
     correct_answers = exam_setup.get('correct_answers', {})
     
@@ -616,16 +630,22 @@ async def show_correct_answers_page(update: Update, context: ContextTypes.DEFAUL
         except Exception as e:
             logger.error(f"Error editing correct answers message: {e}")
     
+    # *** تغییر این قسمت ***
     if update.callback_query:
         chat_id = update.callback_query.message.chat_id
+        message = await context.bot.send_message(
+            chat_id=chat_id,
+            text=message_text,
+            reply_markup=reply_markup
+        )
     else:
         chat_id = update.effective_chat.id
-        
-    message = await context.bot.send_message(
-        chat_id=chat_id,
-        text=message_text,
-        reply_markup=reply_markup
-    )
+        message = await context.bot.send_message(
+            chat_id=chat_id,
+            text=message_text,
+            reply_markup=reply_markup
+        )
+    
     exam_setup['correct_answers_message_id'] = message.message_id
     context.user_data['exam_setup'] = exam_setup
 
