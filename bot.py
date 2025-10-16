@@ -857,15 +857,23 @@ async def show_completion_options(update: Update, context: ContextTypes.DEFAULT_
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     if update.callback_query:
-        await update.callback_query.edit_message_text(
-            text=summary_text,
-            reply_markup=reply_markup
-        )
+        try:
+            await update.callback_query.edit_message_text(
+                text=summary_text,
+                reply_markup=reply_markup
+            )
+        except Exception as e:
+            # اگر ویرایش پیام ممکن نبود، پیام جدید ارسال کن
+            logger.error(f"Error editing message: {e}")
+            await update.callback_query.message.reply_text(
+                text=summary_text,
+                reply_markup=reply_markup
+            )
     else:
         await update.message.reply_text(
             text=summary_text,
             reply_markup=reply_markup
-        )
+    )
 
 async def handle_completion_choice(update: Update, context: ContextTypes.DEFAULT_TYPE, choice: str):
     """مدیریت انتخاب کاربر برای تکمیل آزمون"""
@@ -881,7 +889,8 @@ async def handle_completion_choice(update: Update, context: ContextTypes.DEFAULT
         exam_setup['correct_answers'] = {}
         context.user_data['exam_setup'] = exam_setup
         
-        await query.edit_message_text(
+        # ارسال پیام جدید به جای ویرایش پیام قبلی
+        await query.message.reply_text(
             text="لطفاً پاسخ‌های صحیح را با استفاده از دکمه‌های زیر وارد کنید:"
         )
         await show_correct_answers_page(update, context, page=1)
@@ -912,13 +921,14 @@ async def handle_completion_choice(update: Update, context: ContextTypes.DEFAULT
             for job in current_jobs:
                 job.schedule_removal()
             
-            await query.edit_message_text(
+            # ارسال پیام جدید
+            await query.message.reply_text(
                 text="✅ آزمون شما با موفقیت ذخیره شد.\n\n"
                      "📋 می‌توانید از طریق منوی 'آزمون‌های ناتمام' در آینده پاسخنامه را وارد کرده و نتایج نهایی را مشاهده کنید.",
                 reply_markup=get_main_keyboard()
             )
         else:
-            await query.edit_message_text(
+            await query.message.reply_text(
                 text="❌ خطایی در ذخیره‌سازی آزمون رخ داد. لطفاً مجدداً تلاش کنید."
             )
     
