@@ -1121,14 +1121,11 @@ async def load_pending_exam(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             else:
                 exam_setup['question_list'] = calculate_questions_by_pattern(start_q, end_q, pattern)
             
-            # *** این خط کلیدی است - ذخیره exam_setup در context.user_data ***
+            # ذخیره exam_setup در context.user_data
             context.user_data['exam_setup'] = exam_setup
             
-            await update.callback_query.message.reply_text(
-                f"📚 بارگذاری آزمون: {course_name} - {topic_name}\n"
-                f"🔢 الگو: {get_pattern_name(pattern)}\n"
-                f"📝 لطفاً پاسخ‌های صحیح را وارد کنید:"
-            )
+            # *** حذف این پیام و استفاده مستقیم از show_correct_answers_page ***
+            # await update.callback_query.message.reply_text(...)
             
             await show_correct_answers_page(update, context, page=1)
             
