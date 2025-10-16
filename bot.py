@@ -542,8 +542,12 @@ async def show_questions_page(update: Update, context: ContextTypes.DEFAULT_TYPE
     
 async def show_correct_answers_page(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 1):
     """نمایش سوالات برای وارد کردن پاسخ‌های صحیح"""
+    logger.debug(f"Entering show_correct_answers_page for user {update.effective_user.id}, page: {page}")
+    logger.debug(f"context.user_data: {context.user_data}")
+    
     if 'exam_setup' not in context.user_data:
         error_text = "⚠️ لطفاً ابتدا یک آزمون جدید شروع کنید یا یک آزمون ناتمام را انتخاب کنید."
+        logger.error(f"exam_setup not found in context.user_data for user {update.effective_user.id}")
         if update.callback_query:
             await update.callback_query.message.reply_text(
                 error_text,
@@ -557,6 +561,7 @@ async def show_correct_answers_page(update: Update, context: ContextTypes.DEFAUL
         return
     
     exam_setup = context.user_data['exam_setup']
+    logger.debug(f"exam_setup: {exam_setup}")
     correct_answers = exam_setup.get('correct_answers', {})
     
     course_name = exam_setup.get('course_name', 'نامعلوم')
@@ -619,6 +624,7 @@ async def show_correct_answers_page(update: Update, context: ContextTypes.DEFAUL
     
     exam_setup['correct_answers_page'] = page
     context.user_data['exam_setup'] = exam_setup
+    logger.debug(f"Updated exam_setup with correct_answers_page: {page}")
     
     if 'correct_answers_message_id' in exam_setup:
         try:
@@ -628,6 +634,7 @@ async def show_correct_answers_page(update: Update, context: ContextTypes.DEFAUL
                 text=message_text,
                 reply_markup=reply_markup
             )
+            logger.debug(f"Edited existing message with ID {exam_setup['correct_answers_message_id']}")
             return
         except Exception as e:
             logger.error(f"Error editing correct answers message: {e}")
@@ -642,7 +649,7 @@ async def show_correct_answers_page(update: Update, context: ContextTypes.DEFAUL
     
     exam_setup['correct_answers_message_id'] = message.message_id
     context.user_data['exam_setup'] = exam_setup
-
+    logger.debug(f"Sent new message with ID {message.message_id}")
 def create_progress_bar(percentage):
     """ایجاد نوار پیشرفت"""
     filled = min(10, int(percentage / 10))
