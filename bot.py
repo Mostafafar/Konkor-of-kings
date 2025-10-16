@@ -957,7 +957,7 @@ async def handle_completion_choice(update: Update, context: ContextTypes.DEFAULT
         current_page = exam_setup.get('current_page', 1)
         await show_questions_page(update, context, current_page)
 
-async def show_pending_exams(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
 async def show_pending_exams(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """نمایش آزمون‌های ناتمام کاربر"""
     user_id = update.effective_user.id
