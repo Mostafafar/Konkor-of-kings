@@ -1130,8 +1130,17 @@ async def load_pending_exam(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             context.user_data['exam_setup'] = exam_setup
             logger.debug(f"Stored exam_setup in context.user_data: {exam_setup}")
             
-            # فراخوانی show_correct_answers_page
-            await show_correct_answers_page(update, context, page=1)
+            # ایجاد یک آپدیت جدید برای انتقال به show_correct_answers_page
+            class CustomUpdate:
+                def __init__(self, callback_query):
+                    self.callback_query = callback_query
+                    self.effective_chat = callback_query.message.chat
+                    self.effective_user = callback_query.from_user
+            
+            custom_update = CustomUpdate(update.callback_query)
+            
+            # فراخوانی show_correct_answers_page با آپدیت جدید
+            await show_correct_answers_page(custom_update, context, page=1)
             
         else:
             logger.warning(f"No pending exam found for exam_id {exam_id} and user {user_id}")
