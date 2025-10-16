@@ -1097,7 +1097,7 @@ async def load_pending_exam(update: Update, context: ContextTypes.DEFAULT_TYPE, 
                 'exam_duration': duration,
                 'elapsed_time': elapsed,
                 'question_pattern': pattern,
-                'step': 'waiting_for_correct_answers_inline',
+                'step': 'waiting_for_correct_answers_inline',  # *** اینجا step را تنظیم می‌کنیم ***
                 'correct_answers': {},
                 'exam_id': exam_id,
                 'answers': {}
@@ -1123,12 +1123,10 @@ async def load_pending_exam(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             else:
                 exam_setup['question_list'] = calculate_questions_by_pattern(start_q, end_q, pattern)
             
-            # ذخیره exam_setup در context.user_data
+            # *** ذخیره exam_setup در context.user_data ***
             context.user_data['exam_setup'] = exam_setup
             
-            # *** حذف این پیام و استفاده مستقیم از show_correct_answers_page ***
-            # await update.callback_query.message.reply_text(...)
-            
+            # *** مستقیماً به صفحه پاسخ‌های صحیح برویم ***
             await show_correct_answers_page(update, context, page=1)
             
         else:
@@ -1137,7 +1135,6 @@ async def load_pending_exam(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     except Exception as e:
         logger.error(f"Error loading pending exam: {e}")
         await update.callback_query.message.reply_text("⚠️ خطایی در بارگذاری آزمون رخ داد.")
-
 async def update_exam_with_correct_answers(context: ContextTypes.DEFAULT_TYPE, user_id: int, exam_setup: dict, correct_answers_str: str):
     """به روزرسانی آزمون با پاسخ‌های صحیح و محاسبه نتایج"""
     try:
