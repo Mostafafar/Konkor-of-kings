@@ -1056,10 +1056,12 @@ async def show_pending_exams(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def load_pending_exam(update: Update, context: ContextTypes.DEFAULT_TYPE, exam_id: int):
     """بارگذاری آزمون ناتمام برای تکمیل"""
     user_id = update.effective_user.id
+    logger.debug(f"Loading pending exam for user {user_id}, exam_id: {exam_id}")
     
     try:
         conn = get_db_connection()
         if conn is None:
+            logger.error("Failed to connect to database in load_pending_exam")
             await update.callback_query.message.reply_text("⚠️ خطا در اتصال به دیتابیس.")
             return
             
@@ -1102,7 +1104,8 @@ async def load_pending_exam(update: Update, context: ContextTypes.DEFAULT_TYPE, 
                     exam_setup['answers'] = answers
                 else:
                     exam_setup['answers'] = {}
-            except:
+            except Exception as e:
+                logger.error(f"Error parsing answers_str: {e}")
                 exam_setup['answers'] = {}
             
             # بازیابی لیست سوالات
@@ -1110,18 +1113,21 @@ async def load_pending_exam(update: Update, context: ContextTypes.DEFAULT_TYPE, 
                 try:
                     exam_data = json.loads(exam_data_str)
                     exam_setup['question_list'] = exam_data.get('question_list', [])
-                except:
+                except Exception as e:
+                    logger.error(f"Error parsing exam_data_str: {e}")
                     exam_setup['question_list'] = calculate_questions_by_pattern(start_q, end_q, pattern)
             else:
                 exam_setup['question_list'] = calculate_questions_by_pattern(start_q, end_q, pattern)
             
             # ذخیره exam_setup در context.user_data
             context.user_data['exam_setup'] = exam_setup
+            logger.debug(f"Stored exam_setup in context.user_data: {exam_setup}")
             
-            # مستقیماً به صفحه پاسخ‌های صحیح هدایت می‌شود
+            # فراخوانی show_correct_answers_page
             await show_correct_answers_page(update, context, page=1)
             
         else:
+            logger.warning(f"No pending exam found for exam_id {exam_id} and user {user_id}")
             await update.callback_query.message.reply_text("❌ آزمون مورد نظر یافت نشد.")
             
     except Exception as e:
