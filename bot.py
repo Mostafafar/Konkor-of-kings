@@ -1416,15 +1416,24 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "finish_exam":
         exam_setup['step'] = 'completion_choice'
         context.user_data['exam_setup'] = exam_setup
-        
+    
         start_time = exam_setup.get('start_time')
         elapsed_time = calculate_elapsed_time(start_time)
         exam_setup['elapsed_time'] = elapsed_time
-        
+    
         if 'user_exams' in context.bot_data and user_id in context.bot_data['user_exams']:
             context.bot_data['user_exams'][user_id] = exam_setup
-        
-        await show_completion_options(update, context)
+    
+    # استفاده از try-except برای مدیریت خطاهای ویرایش پیام
+        try:
+            await show_completion_options(update, context)
+        except Exception as e:
+            logger.error(f"Error showing completion options: {e}")
+        # ارسال پیام جدید در صورت خطا
+            await query.message.reply_text(
+                "خطایی رخ داد. لطفاً مجدداً تلاش کنید.",
+                reply_markup=get_main_keyboard()
+        )
     
     elif data in ["enter_answers_now", "save_for_later", "back_to_exam"]:
         await handle_completion_choice(update, context, data)
