@@ -121,7 +121,8 @@ def init_db():
         columns_to_add = [
             ('status', 'TEXT DEFAULT \'completed\''),
             ('completed_at', 'TIMESTAMP'),
-            ('exam_data', 'TEXT')
+            ('exam_data', 'TEXT'),
+            ('last_active', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP')
         ]
         
         for column_name, column_type in columns_to_add:
@@ -129,10 +130,10 @@ def init_db():
                 cur.execute(f"""
                     SELECT column_name 
                     FROM information_schema.columns 
-                    WHERE table_name='exams' AND column_name='{column_name}'
+                    WHERE table_name='users' AND column_name='{column_name}'
                 """)
                 if not cur.fetchone():
-                    cur.execute(f"ALTER TABLE exams ADD COLUMN {column_name} {column_type}")
+                    cur.execute(f"ALTER TABLE users ADD COLUMN {column_name} {column_type}")
                     logger.info(f"Added missing column: {column_name}")
             except Exception as e:
                 logger.error(f"Error checking/adding column {column_name}: {e}")
@@ -210,22 +211,42 @@ async def save_user_info(user):
             jalali_date = get_jalali_date()
             tehran_time = get_tehran_time()
             
-            cur.execute("""
-                INSERT INTO users (user_id, username, first_name, last_name, jalali_date, tehran_time, last_active)
-                VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
-                ON CONFLICT (user_id) DO UPDATE SET
-                username = EXCLUDED.username,
-                first_name = EXCLUDED.first_name,
-                last_name = EXCLUDED.last_name,
-                last_active = CURRENT_TIMESTAMP
-            """, (
-                user.id,
-                user.username or '',
-                user.first_name or '',
-                user.last_name or '',
-                jalali_date,
-                tehran_time
-            ))
+            # ابتدا بررسی کنیم که آیا ستون last_active وجود دارد
+            try:
+                cur.execute("""
+                    INSERT INTO users (user_id, username, first_name, last_name, jalali_date, tehran_time, last_active)
+                    VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+                    ON CONFLICT (user_id) DO UPDATE SET
+                    username = EXCLUDED.username,
+                    first_name = EXCLUDED.first_name,
+                    last_name = EXCLUDED.last_name,
+                    last_active = CURRENT_TIMESTAMP
+                """, (
+                    user.id,
+                    user.username or '',
+                    user.first_name or '',
+                    user.last_name or '',
+                    jalali_date,
+                    tehran_time
+                ))
+            except Exception as column_error:
+                # اگر ستون last_active وجود ندارد، بدون آن insert کنیم
+                logger.warning(f"last_active column not found, inserting without it: {column_error}")
+                cur.execute("""
+                    INSERT INTO users (user_id, username, first_name, last_name, jalali_date, tehran_time)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (user_id) DO UPDATE SET
+                    username = EXCLUDED.username,
+                    first_name = EXCLUDED.first_name,
+                    last_name = EXCLUDED.last_name
+                """, (
+                    user.id,
+                    user.username or '',
+                    user.first_name or '',
+                    user.last_name or '',
+                    jalali_date,
+                    tehran_time
+                ))
             
             conn.commit()
             cur.close()
@@ -234,7 +255,6 @@ async def save_user_info(user):
     except Exception as e:
         logger.error(f"Error saving user info: {e}")
     return False
-
 async def notify_admin_new_user(context: ContextTypes.DEFAULT_TYPE, user):
     """ارسال اطلاعات کاربر جدید به ادمین"""
     try:
@@ -938,6 +958,7 @@ async def handle_completion_choice(update: Update, context: ContextTypes.DEFAULT
         await show_questions_page(update, context, current_page)
 
 async def show_pending_exams(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def show_pending_exams(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """نمایش آزمون‌های ناتمام کاربر"""
     user_id = update.effective_user.id
     
@@ -1056,13 +1077,17 @@ async def load_pending_exam(update: Update, context: ContextTypes.DEFAULT_TYPE, 
                 'question_pattern': pattern,
                 'step': 'waiting_for_correct_answers_inline',
                 'correct_answers': {},
-                'exam_id': exam_id  # ذخیره ID برای به روزرسانی بعدی
+                'exam_id': exam_id,  # ذخیره ID برای به روزرسانی بعدی
+                'answers': {}
             }
             
             # بازیابی پاسخ‌های کاربر
             try:
-                answers = eval(answers_str) if answers_str else {}
-                exam_setup['answers'] = answers
+                if answers_str and answers_str != '{}':
+                    answers = eval(answers_str) if answers_str else {}
+                    exam_setup['answers'] = answers
+                else:
+                    exam_setup['answers'] = {}
             except:
                 exam_setup['answers'] = {}
             
@@ -1077,6 +1102,7 @@ async def load_pending_exam(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             else:
                 exam_setup['question_list'] = calculate_questions_by_pattern(start_q, end_q, pattern)
             
+            # ذخیره exam_setup در context.user_data
             context.user_data['exam_setup'] = exam_setup
             
             await update.callback_query.message.reply_text(
