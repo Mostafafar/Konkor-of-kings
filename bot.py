@@ -1068,7 +1068,10 @@ async def load_pending_exam(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     try:
         conn = get_db_connection()
         if conn is None:
-            await update.callback_query.message.reply_text("⚠️ خطا در اتصال به دیتابیس.")
+            if update.callback_query:
+                await update.callback_query.message.reply_text("⚠️ خطا در اتصال به دیتابیس.")
+            else:
+                await update.message.reply_text("⚠️ خطا در اتصال به دیتابیس.")
             return
             
         cur = conn.cursor()
@@ -1118,7 +1121,14 @@ async def load_pending_exam(update: Update, context: ContextTypes.DEFAULT_TYPE, 
                 try:
                     exam_data = json.loads(exam_data_str)
                     exam_setup['question_list'] = exam_data.get('question_list', [])
-                except:
+                    # همچنین سایر داده‌ها را از exam_data بازیابی می‌کنیم
+                    if 'start_time' in exam_data and exam_data['start_time']:
+                        try:
+                            exam_setup['start_time'] = datetime.fromisoformat(exam_data['start_time'])
+                        except:
+                            exam_setup['start_time'] = None
+                except Exception as e:
+                    logger.error(f"Error parsing exam_data: {e}")
                     exam_setup['question_list'] = calculate_questions_by_pattern(start_q, end_q, pattern)
             else:
                 exam_setup['question_list'] = calculate_questions_by_pattern(start_q, end_q, pattern)
@@ -1126,15 +1136,24 @@ async def load_pending_exam(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             # *** ذخیره exam_setup در context.user_data ***
             context.user_data['exam_setup'] = exam_setup
             
+            # *** لاگ برای دیباگ ***
+            logger.info(f"Loaded pending exam: {exam_id}, step: {exam_setup['step']}, questions: {len(exam_setup.get('question_list', []))}")
+            
             # *** مستقیماً به صفحه پاسخ‌های صحیح برویم ***
             await show_correct_answers_page(update, context, page=1)
             
         else:
-            await update.callback_query.message.reply_text("❌ آزمون مورد نظر یافت نشد.")
+            if update.callback_query:
+                await update.callback_query.message.reply_text("❌ آزمون مورد نظر یافت نشد.")
+            else:
+                await update.message.reply_text("❌ آزمون مورد نظر یافت نشد.")
             
     except Exception as e:
         logger.error(f"Error loading pending exam: {e}")
-        await update.callback_query.message.reply_text("⚠️ خطایی در بارگذاری آزمون رخ داد.")
+        if update.callback_query:
+            await update.callback_query.message.reply_text("⚠️ خطایی در بارگذاری آزمون رخ داد.")
+        else:
+            await update.message.reply_text("⚠️ خطایی در بارگذاری آزمون رخ داد.")
 async def update_exam_with_correct_answers(context: ContextTypes.DEFAULT_TYPE, user_id: int, exam_setup: dict, correct_answers_str: str):
     """به روزرسانی آزمون با پاسخ‌های صحیح و محاسبه نتایج"""
     try:
