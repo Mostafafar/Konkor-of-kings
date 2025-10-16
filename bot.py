@@ -1512,8 +1512,8 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     
     elif data.startswith("load_exam_"):
-        exam_id = int(data.split("_")[2])
-        await load_pending_exam(update, context, exam_id)
+       exam_id = int(data.split("_")[2])
+       await load_pending_exam(update, context, exam_id)
     
     elif data == "back_to_main":
         await query.edit_message_text(
