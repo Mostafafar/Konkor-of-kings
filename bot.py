@@ -1077,7 +1077,7 @@ async def load_pending_exam(update: Update, context: ContextTypes.DEFAULT_TYPE, 
                 'question_pattern': pattern,
                 'step': 'waiting_for_correct_answers_inline',
                 'correct_answers': {},
-                'exam_id': exam_id,  # ذخیره ID برای به روزرسانی بعدی
+                'exam_id': exam_id,
                 'answers': {}
             }
             
@@ -1097,12 +1097,11 @@ async def load_pending_exam(update: Update, context: ContextTypes.DEFAULT_TYPE, 
                     exam_data = json.loads(exam_data_str)
                     exam_setup['question_list'] = exam_data.get('question_list', [])
                 except:
-                    # اگر نمی‌توانیم داده‌ها را بازیابی کنیم، لیست سوالات را دوباره محاسبه می‌کنیم
                     exam_setup['question_list'] = calculate_questions_by_pattern(start_q, end_q, pattern)
             else:
                 exam_setup['question_list'] = calculate_questions_by_pattern(start_q, end_q, pattern)
             
-            # ذخیره exam_setup در context.user_data
+            # *** این خط کلیدی است - ذخیره exam_setup در context.user_data ***
             context.user_data['exam_setup'] = exam_setup
             
             await update.callback_query.message.reply_text(
