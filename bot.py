@@ -1446,21 +1446,26 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ لطفاً یک عدد معتبر وارد کنید.")
 
 async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """مدیریت پاسخ‌های اینلاین"""
+    """مدیریت پاسخ‌های اینلاین - نسخه دیباگ"""
     query = update.callback_query
     await query.answer()
     
     data = query.data
     user_id = query.from_user.id
     
+    logger.info(f"🔍 [DEBUG] handle_answer called - data: {data}, user_id: {user_id}")
+    
     if data == "ignore":
+        logger.info("🔍 [DEBUG] Ignore callback received")
         return
     
     if 'exam_setup' not in context.user_data:
+        logger.error("❌ [DEBUG] exam_setup not found in handle_answer")
         await query.edit_message_text("⚠️ لطفا ابتدا یک آزمون جدید شروع کنید.")
         return
         
     exam_setup = context.user_data['exam_setup']
+    logger.info(f"✅ [DEBUG] exam_setup found in handle_answer, step: {exam_setup.get('step')}")
     
     if data.startswith("pattern_"):
         pattern_map = {
