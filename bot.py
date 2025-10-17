@@ -1459,6 +1459,13 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info("🔍 [DEBUG] Ignore callback received")
         return
     
+    # *** اضافه کردن این بخش برای مدیریت load_exam_ ***
+    if data.startswith("load_exam_"):
+        exam_id = int(data.split("_")[2])
+        logger.info(f"🚀 [DEBUG] Loading exam with ID: {exam_id}")
+        await load_pending_exam(update, context, exam_id)
+        return
+    
     if 'exam_setup' not in context.user_data:
         logger.error("❌ [DEBUG] exam_setup not found in handle_answer")
         await query.edit_message_text("⚠️ لطفا ابتدا یک آزمون جدید شروع کنید.")
