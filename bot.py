@@ -541,38 +541,68 @@ async def show_questions_page(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     
 async def show_correct_answers_page(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 1):
-    """نمایش سوالات برای وارد کردن پاسخ‌های صحیح"""
-    logger.debug(f"Entering show_correct_answers_page for user {update.effective_user.id}, page: {page}")
-    logger.debug(f"context.user_data: {context.user_data}")
+    """نمایش سوالات برای وارد کردن پاسخ‌های صحیح - نسخه دیباگ"""
+    logger.info(f"🔍 [DEBUG] show_correct_answers_page called - page: {page}")
+    
+    # *** چک context.user_data ***
+    logger.info(f"🔍 [DEBUG] context.user_data keys: {list(context.user_data.keys())}")
     
     if 'exam_setup' not in context.user_data:
-        error_text = "⚠️ لطفاً ابتدا یک آزمون جدید شروع کنید یا یک آزمون ناتمام را انتخاب کنید."
-        logger.error(f"exam_setup not found in context.user_data for user {update.effective_user.id}")
+        logger.error("❌ [DEBUG] exam_setup not found in context.user_data")
         if update.callback_query:
             await update.callback_query.message.reply_text(
-                error_text,
+                "⚠️ مشکلی در بارگذاری آزمون رخ داده است. لطفاً مجدداً از منوی 'آزمون‌های ناتمام' انتخاب کنید.",
                 reply_markup=get_main_keyboard()
             )
         else:
             await update.message.reply_text(
-                error_text,
+                "⚠️ مشکلی در بارگذاری آزمون رخ داده است. لطفاً مجدداً از منوی 'آزمون‌های ناتمام' انتخاب کنید.",
                 reply_markup=get_main_keyboard()
             )
         return
     
     exam_setup = context.user_data['exam_setup']
-    logger.debug(f"exam_setup: {exam_setup}")
+    logger.info(f"✅ [DEBUG] exam_setup found - keys: {list(exam_setup.keys())}")
+    logger.info(f"🎯 [DEBUG] Current step: {exam_setup.get('step')}")
+    
+    # *** اطمینان از تنظیم step ***
+    if exam_setup.get('step') != 'waiting_for_correct_answers_inline':
+        logger.warning(f"⚠️ [DEBUG] Step mismatch. Current: {exam_setup.get('step')}, Expected: waiting_for_correct_answers_inline")
+        exam_setup['step'] = 'waiting_for_correct_answers_inline'
+        context.user_data['exam_setup'] = exam_setup
+        logger.info(f"✅ [DEBUG] Step corrected to: {exam_setup['step']}")
+    
     correct_answers = exam_setup.get('correct_answers', {})
+    logger.info(f"📝 [DEBUG] Correct answers: {correct_answers}")
     
     course_name = exam_setup.get('course_name', 'نامعلوم')
     topic_name = exam_setup.get('topic_name', 'نامعلوم')
-    total_questions = exam_setup.get('total_questions')
+    total_questions = exam_setup.get('total_questions', 0)
     question_pattern = exam_setup.get('question_pattern', 'all')
     
     question_list = exam_setup.get('question_list', [])
+    logger.info(f"🔢 [DEBUG] Question list: {question_list}")
+    logger.info(f"📊 [DEBUG] Total questions: {total_questions}, List length: {len(question_list)}")
+    
+    # *** چک برای اطمینان از وجود question_list ***
+    if not question_list:
+        logger.error("❌ [DEBUG] question_list is empty")
+        if update.callback_query:
+            await update.callback_query.message.reply_text(
+                "⚠️ خطا در بارگذاری سوالات. لطفاً مجدداً تلاش کنید.",
+                reply_markup=get_main_keyboard()
+            )
+        else:
+            await update.message.reply_text(
+                "⚠️ خطا در بارگذاری سوالات. لطفاً مجدداً تلاش کنید.",
+                reply_markup=get_main_keyboard()
+            )
+        return
     
     total_pages = calculate_total_pages(total_questions)
     page = max(1, min(page, total_pages))
+    
+    logger.info(f"📄 [DEBUG] Total pages: {total_pages}, Current page: {page}")
     
     start_idx = (page - 1) * QUESTIONS_PER_PAGE
     end_idx = min(start_idx + QUESTIONS_PER_PAGE, total_questions)
@@ -588,7 +618,12 @@ async def show_correct_answers_page(update: Update, context: ContextTypes.DEFAUL
     
     keyboard = []
     
+    logger.info(f"🔍 [DEBUG] Creating keyboard for questions {start_idx} to {end_idx}")
     for i in range(start_idx, end_idx):
+        if i >= len(question_list):
+            logger.warning(f"⚠️ [DEBUG] Index {i} out of range for question_list length {len(question_list)}")
+            break
+            
         question_num = question_list[i]
         current_answer = correct_answers.get(str(question_num))
         question_buttons = []
@@ -602,6 +637,7 @@ async def show_correct_answers_page(update: Update, context: ContextTypes.DEFAUL
             question_buttons.append(InlineKeyboardButton(button_text, callback_data=f"correct_ans_{question_num}_{option}"))
         
         keyboard.append(question_buttons)
+        logger.info(f"🔘 [DEBUG] Added buttons for question {question_num}, current answer: {current_answer}")
     
     navigation_buttons = []
     if total_pages > 1:
@@ -624,32 +660,48 @@ async def show_correct_answers_page(update: Update, context: ContextTypes.DEFAUL
     
     exam_setup['correct_answers_page'] = page
     context.user_data['exam_setup'] = exam_setup
-    logger.debug(f"Updated exam_setup with correct_answers_page: {page}")
     
-    if 'correct_answers_message_id' in exam_setup:
-        try:
+    # *** مدیریت ارسال/ویرایش پیام ***
+    chat_id = update.effective_chat.id
+    if update.callback_query:
+        chat_id = update.callback_query.message.chat_id
+    
+    logger.info(f"💬 [DEBUG] Preparing to send message to chat_id: {chat_id}")
+    
+    try:
+        if 'correct_answers_message_id' in exam_setup:
+            message_id = exam_setup['correct_answers_message_id']
+            logger.info(f"✏️ [DEBUG] Editing existing message: {message_id}")
             await context.bot.edit_message_text(
-                chat_id=update.effective_chat.id,
-                message_id=exam_setup['correct_answers_message_id'],
+                chat_id=chat_id,
+                message_id=message_id,
                 text=message_text,
                 reply_markup=reply_markup
             )
-            logger.debug(f"Edited existing message with ID {exam_setup['correct_answers_message_id']}")
-            return
-        except Exception as e:
-            logger.error(f"Error editing correct answers message: {e}")
-    
-    # ارسال پیام جدید
-    chat_id = update.effective_chat.id if hasattr(update, 'effective_chat') else update.callback_query.message.chat_id
-    message = await context.bot.send_message(
-        chat_id=chat_id,
-        text=message_text,
-        reply_markup=reply_markup
-    )
-    
-    exam_setup['correct_answers_message_id'] = message.message_id
-    context.user_data['exam_setup'] = exam_setup
-    logger.debug(f"Sent new message with ID {message.message_id}")
+            logger.info("✅ [DEBUG] Message edited successfully")
+        else:
+            logger.info("🆕 [DEBUG] Sending new message")
+            message = await context.bot.send_message(
+                chat_id=chat_id,
+                text=message_text,
+                reply_markup=reply_markup
+            )
+            exam_setup['correct_answers_message_id'] = message.message_id
+            context.user_data['exam_setup'] = exam_setup
+            logger.info(f"✅ [DEBUG] New message sent with ID: {message.message_id}")
+            
+    except Exception as e:
+        logger.error(f"❌ [DEBUG] Error in message handling: {e}")
+        # اگر خطا رخ داد، پیام جدید ارسال کن
+        logger.info("🔄 [DEBUG] Trying to send new message after error")
+        message = await context.bot.send_message(
+            chat_id=chat_id,
+            text=message_text,
+            reply_markup=reply_markup
+        )
+        exam_setup['correct_answers_message_id'] = message.message_id
+        context.user_data['exam_setup'] = exam_setup
+        logger.info(f"✅ [DEBUG] New message sent after error with ID: {message.message_id}")
 def create_progress_bar(percentage):
     """ایجاد نوار پیشرفت"""
     filled = min(10, int(percentage / 10))
