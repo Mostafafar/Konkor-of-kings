@@ -1061,19 +1061,24 @@ async def show_pending_exams(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await update.message.reply_text(message_text)
 
 async def load_pending_exam(update: Update, context: ContextTypes.DEFAULT_TYPE, exam_id: int):
-    """بارگذاری آزمون ناتمام برای تکمیل"""
+    """بارگذاری آزمون ناتمام برای تکمیل - نسخه دیباگ"""
     user_id = update.effective_user.id
-    logger.debug(f"Loading pending exam for user {user_id}, exam_id: {exam_id}")
+    
+    logger.info(f"🔍 [DEBUG] load_pending_exam called - exam_id: {exam_id}, user_id: {user_id}")
     
     try:
         conn = get_db_connection()
         if conn is None:
-            logger.error("Failed to connect to database in load_pending_exam")
-            await update.callback_query.message.reply_text("⚠️ خطا در اتصال به دیتابیس.")
+            logger.error("❌ [DEBUG] Database connection failed")
+            if update.callback_query:
+                await update.callback_query.message.reply_text("⚠️ خطا در اتصال به دیتابیس.")
+            else:
+                await update.message.reply_text("⚠️ خطا در اتصال به دیتابیس.")
             return
             
         cur = conn.cursor()
         
+        logger.info(f"🔍 [DEBUG] Executing SQL query for exam_id: {exam_id}")
         cur.execute(
             """SELECT course_name, topic_name, start_question, end_question, total_questions,
                       exam_duration, elapsed_time, answers, question_pattern, exam_data
@@ -1087,6 +1092,11 @@ async def load_pending_exam(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         
         if exam:
             course_name, topic_name, start_q, end_q, total_questions, duration, elapsed, answers_str, pattern, exam_data_str = exam
+            
+            logger.info(f"✅ [DEBUG] Exam found - Course: {course_name}, Topic: {topic_name}")
+            logger.info(f"📊 [DEBUG] Questions: {start_q}-{end_q}, Total: {total_questions}, Pattern: {pattern}")
+            logger.info(f"📝 [DEBUG] Answers string: {answers_str}")
+            logger.info(f"💾 [DEBUG] Exam data string: {exam_data_str}")
             
             # بازیابی داده‌های آزمون
             exam_setup = {
@@ -1107,48 +1117,66 @@ async def load_pending_exam(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             # بازیابی پاسخ‌های کاربر
             try:
                 if answers_str and answers_str != '{}':
+                    logger.info(f"🔍 [DEBUG] Parsing answers string: {answers_str}")
                     answers = eval(answers_str) if answers_str else {}
                     exam_setup['answers'] = answers
+                    logger.info(f"✅ [DEBUG] Parsed answers: {answers}")
                 else:
                     exam_setup['answers'] = {}
+                    logger.info("ℹ️ [DEBUG] No answers found")
             except Exception as e:
-                logger.error(f"Error parsing answers_str: {e}")
+                logger.error(f"❌ [DEBUG] Error parsing answers: {e}")
                 exam_setup['answers'] = {}
             
             # بازیابی لیست سوالات
+            question_list = []
             if exam_data_str:
                 try:
+                    logger.info(f"🔍 [DEBUG] Parsing exam_data: {exam_data_str}")
                     exam_data = json.loads(exam_data_str)
-                    exam_setup['question_list'] = exam_data.get('question_list', [])
+                    question_list = exam_data.get('question_list', [])
+                    logger.info(f"✅ [DEBUG] Question list from exam_data: {question_list}")
+                    
+                    if 'start_time' in exam_data and exam_data['start_time']:
+                        try:
+                            exam_setup['start_time'] = datetime.fromisoformat(exam_data['start_time'])
+                        except:
+                            exam_setup['start_time'] = None
                 except Exception as e:
-                    logger.error(f"Error parsing exam_data_str: {e}")
-                    exam_setup['question_list'] = calculate_questions_by_pattern(start_q, end_q, pattern)
+                    logger.error(f"❌ [DEBUG] Error parsing exam_data: {e}")
+                    question_list = calculate_questions_by_pattern(start_q, end_q, pattern)
+                    logger.info(f"🔢 [DEBUG] Calculated question list: {question_list}")
             else:
-                exam_setup['question_list'] = calculate_questions_by_pattern(start_q, end_q, pattern)
+                question_list = calculate_questions_by_pattern(start_q, end_q, pattern)
+                logger.info(f"🔢 [DEBUG] Calculated question list (no exam_data): {question_list}")
             
-            # ذخیره exam_setup در context.user_data
+            exam_setup['question_list'] = question_list
+            
+            # *** ذخیره exam_setup در context.user_data ***
             context.user_data['exam_setup'] = exam_setup
-            logger.debug(f"Stored exam_setup in context.user_data: {exam_setup}")
             
-            # ایجاد یک آپدیت جدید برای انتقال به show_correct_answers_page
-            class CustomUpdate:
-                def __init__(self, callback_query):
-                    self.callback_query = callback_query
-                    self.effective_chat = callback_query.message.chat
-                    self.effective_user = callback_query.from_user
+            logger.info(f"💾 [DEBUG] exam_setup saved to context.user_data")
+            logger.info(f"📋 [DEBUG] exam_setup keys: {list(exam_setup.keys())}")
+            logger.info(f"🔢 [DEBUG] question_list length: {len(question_list)}")
+            logger.info(f"🎯 [DEBUG] step: {exam_setup['step']}")
             
-            custom_update = CustomUpdate(update.callback_query)
-            
-            # فراخوانی show_correct_answers_page با آپدیت جدید
-            await show_correct_answers_page(custom_update, context, page=1)
+            # *** مستقیماً به صفحه پاسخ‌های صحیح برویم ***
+            logger.info("🚀 [DEBUG] Calling show_correct_answers_page...")
+            await show_correct_answers_page(update, context, page=1)
             
         else:
-            logger.warning(f"No pending exam found for exam_id {exam_id} and user {user_id}")
-            await update.callback_query.message.reply_text("❌ آزمون مورد نظر یافت نشد.")
+            logger.error(f"❌ [DEBUG] No exam found with id: {exam_id}")
+            if update.callback_query:
+                await update.callback_query.message.reply_text("❌ آزمون مورد نظر یافت نشد.")
+            else:
+                await update.message.reply_text("❌ آزمون مورد نظر یافت نشد.")
             
     except Exception as e:
-        logger.error(f"Error loading pending exam: {e}")
-        await update.callback_query.message.reply_text("⚠️ خطایی در بارگذاری آزمون رخ داد.")
+        logger.error(f"❌ [DEBUG] Error in load_pending_exam: {e}")
+        if update.callback_query:
+            await update.callback_query.message.reply_text("⚠️ خطایی در بارگذاری آزمون رخ داد.")
+        else:
+            await update.message.reply_text("⚠️ خطایی در بارگذاری آزمون رخ داد.")
 async def update_exam_with_correct_answers(context: ContextTypes.DEFAULT_TYPE, user_id: int, exam_setup: dict, correct_answers_str: str):
     """به روزرسانی آزمون با پاسخ‌های صحیح و محاسبه نتایج"""
     try:
